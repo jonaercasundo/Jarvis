@@ -1,0 +1,4086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+
+    <title data-ai-name>AI Assistant</title>
+
+    {{-- PERF: make sure `npm run build` has been run and public/hot does NOT exist in production. --}}
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+
+    {{-- PERF: warm up the CDN connections used for Three.js and the display font --}}
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@200;300;400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --jc-cyan: 110, 231, 255;
+            --jc-violet: 167, 139, 250;
+            --jc-emerald: 52, 211, 153;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        body {
+            background:
+                radial-gradient(900px 620px at 50% 49%, rgba(0, 150, 255, 0.14), transparent 68%),
+                radial-gradient(1100px 740px at 50% 105%, rgba(3, 62, 137, 0.26), transparent 72%),
+                #020817;
+            color: #e5e7eb;
+            font-family: 'Sora', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* ---------- Ambient particle network (page background) ---------- */
+        #jc-network-bg {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
+        /* Perspective floor grid, fades out toward the horizon */
+        #jc-grid-bg {
+            position: fixed;
+            left: -25%;
+            right: -25%;
+            bottom: 0;
+            height: 46vh;
+            z-index: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(var(--jc-cyan), 0.16) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(var(--jc-cyan), 0.16) 1px, transparent 1px);
+            background-size: 64px 64px;
+            transform: perspective(520px) rotateX(62deg);
+            transform-origin: 50% 100%;
+            -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 85%);
+            mask-image: linear-gradient(to top, #000 0%, transparent 85%);
+            opacity: 0.18;
+        }
+
+        #jc-app {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ---------- Glass panels (PERF: blur radius kept low; it sits above animating canvases) ---------- */
+        .jc-glass {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .jc-glass-strong {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 0 0 1px rgba(var(--jc-cyan), 0.07), 0 24px 70px -24px rgba(59, 130, 246, 0.32);
+        }
+
+        /* ---------- Shimmer wordmark ---------- */
+        .jc-shimmer-text {
+            background: linear-gradient(110deg, #6ee7ff 20%, #c4b5fd 45%, #6ee7ff 70%);
+            background-size: 220% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: jc-shimmer 7s linear infinite;
+        }
+
+        @keyframes jc-shimmer {
+            to { background-position: -220% center; }
+        }
+
+        /* ---------- JC: a luminous human presence ---------- */
+        #jarvis-avatar-wrap {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        #jarvis-avatar-wrap::before {
+            content: "";
+            position: absolute;
+            width: min(82vw, 820px);
+            aspect-ratio: 1;
+            left: 50%;
+            top: 4%;
+            transform: translateX(-50%);
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(var(--jc-accent), 0.20), rgba(var(--jc-accent), 0.12) 43%, transparent 72%);
+            opacity: 0.78;
+            transition: opacity 0.45s ease, transform 0.45s ease, background 0.45s ease;
+        }
+
+        #jc-avatar-portrait {
+            position: absolute;
+            left: 50%;
+            bottom: -5vh;
+            width: min(118vw, 1120px);
+            height: auto;
+            max-height: 112vh;
+            transform: translateX(-50%);
+            overflow: visible;
+            opacity: 0.94;
+            filter: drop-shadow(0 0 28px rgba(var(--jc-accent), 0.22));
+            transition: filter 0.45s ease, opacity 0.45s ease;
+        }
+
+        #jc-avatar-portrait .jc-avatar-head {
+            transform-box: view-box;
+            transform-origin: 450px 270px;
+            transition: filter 0.35s ease;
+            filter: drop-shadow(0 0 14px rgba(var(--jc-accent), 0.16));
+        }
+
+        #jc-avatar-portrait .jc-avatar-bust {
+            transform-box: view-box;
+            transform-origin: 450px 610px;
+            animation: jc-bust-glow 5.6s ease-in-out infinite;
+        }
+
+        #jc-avatar-portrait .jc-face-highlight {
+            mix-blend-mode: screen;
+            opacity: 0.52;
+        }
+
+        #jc-avatar-portrait .jc-avatar-orbit {
+            transform-box: view-box;
+            transform-origin: 450px 330px;
+            animation: jc-orbit-drift 72s linear infinite;
+        }
+
+        #jc-avatar-portrait .jc-avatar-node {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: jc-node-glint 3.8s ease-in-out infinite;
+        }
+
+        #jc-avatar-portrait .jc-avatar-node:nth-of-type(2) {
+            animation-delay: -1.3s;
+        }
+
+        #jc-avatar-portrait .jc-avatar-node:nth-of-type(3) {
+            animation-delay: -2.5s;
+        }
+
+        #jc-avatar-portrait .jc-holo-core {
+            transform-box: fill-box;
+            transform-origin: center;
+            filter: drop-shadow(0 0 12px rgba(var(--jc-accent), 0.9));
+            animation: jc-core-pulse 2.8s ease-in-out infinite;
+        }
+
+        #jc-avatar-portrait .jc-holo-node {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: jc-node-glint 2.8s ease-in-out infinite;
+        }
+
+        #jc-avatar-portrait .jc-hud-line {
+            stroke-dasharray: 8 14;
+            animation: jc-circuit-charge 9s linear infinite;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-hud-line {
+            animation-duration: 2.4s;
+        }
+
+        body:has(.ai-speaking) #jc-avatar-portrait .jc-holo-core {
+            animation-duration: 0.48s;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-holo-node {
+            animation-duration: 0.9s;
+        }
+
+        body:has(.ai-thinking) #jc-avatar-portrait .jc-holo-node {
+            animation-duration: 1.2s;
+        }
+
+        #jc-avatar-portrait .jc-avatar-eyes {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: jc-avatar-blink 6.2s ease-in-out infinite;
+        }
+
+        #jc-avatar-portrait .jc-avatar-listen-gesture {
+            opacity: 0;
+            transform: scale(0.88);
+            transform-box: view-box;
+            transform-origin: 450px 300px;
+            transition: opacity 0.3s ease, transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        #jc-avatar-portrait .jc-mouth-aperture {
+            transform-box: fill-box;
+            transform-origin: center;
+            transform: scaleY(0.12);
+            transition: transform 0.12s ease;
+        }
+
+        #jc-avatar-portrait .jc-avatar-scan {
+            opacity: 0.18;
+            transform: translateY(-310px);
+            transition: opacity 0.35s ease;
+        }
+
+        body:has(.ai-listening) #jarvis-avatar-wrap::before {
+            opacity: 1;
+            transform: translateX(-50%) scale(1.08);
+        }
+
+        body:has(.ai-thinking) #jarvis-avatar-wrap::before {
+            opacity: 0.78;
+        }
+
+        body:has(.ai-speaking) #jarvis-avatar-wrap::before {
+            opacity: 0.95;
+            transform: translateX(-50%) scale(1.04);
+        }
+
+        body:has(.ai-idle) #jc-avatar-portrait .jc-avatar-head,
+        body:has(.ai-armed) #jc-avatar-portrait .jc-avatar-head {
+            animation: jc-avatar-breathe 4.8s ease-in-out infinite;
+        }
+
+        body:has(.ai-idle) #jarvis-avatar-wrap::before,
+        body:has(.ai-armed) #jarvis-avatar-wrap::before {
+            animation: jc-avatar-aura 4.8s ease-in-out infinite;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-avatar-head {
+            animation: jc-listening-nod 2.4s ease-in-out infinite;
+            filter: drop-shadow(0 0 22px rgba(var(--jc-accent), 0.26));
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-avatar-eyes {
+            filter: drop-shadow(0 0 9px rgba(103, 239, 255, 0.7));
+            animation-duration: 4.2s;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-avatar-orbit {
+            animation-duration: 24s;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-avatar-listen-gesture {
+            opacity: 0.92;
+            transform: scale(1);
+            animation: jc-listening-radar 1.8s ease-in-out infinite;
+        }
+
+        body:has(.ai-listening) #jc-avatar-portrait .jc-avatar-scan {
+            opacity: 0.8;
+            animation: jc-listening-scan 3.2s ease-in-out infinite;
+        }
+
+        body:has(.ai-speaking) #jc-avatar-portrait .jc-mouth-aperture {
+            animation: jc-speaking-mouth 0.34s ease-in-out infinite alternate;
+        }
+
+        body:has(.ai-speaking) #jc-avatar-portrait .jc-avatar-head {
+            animation: jc-speaking-nod 0.9s ease-in-out infinite alternate;
+            filter: drop-shadow(0 0 24px rgba(var(--jc-accent), 0.32));
+        }
+
+        body:has(.ai-speaking) #jc-avatar-portrait .jc-avatar-eyes {
+            filter: drop-shadow(0 0 12px rgba(103, 239, 255, 0.9));
+        }
+
+        body:has(.ai-thinking) #jc-avatar-portrait .jc-avatar-orbit {
+            animation-duration: 16s;
+        }
+
+        #jarvis-avatar-wrap.jc-avatar-pulse #jc-avatar-portrait {
+            filter: drop-shadow(0 0 38px rgba(var(--jc-accent), 0.55));
+        }
+
+        @keyframes jc-listening-nod {
+            0%, 100% { transform: rotate(0deg) translateY(0); }
+            38% { transform: rotate(-2deg) translateY(3px); }
+            68% { transform: rotate(-1deg) translateY(1px); }
+        }
+
+        @keyframes jc-avatar-breathe {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-3px) rotate(0.35deg); }
+        }
+
+        @keyframes jc-avatar-aura {
+            0%, 100% { opacity: 0.48; }
+            50% { opacity: 0.72; }
+        }
+
+        @keyframes jc-bust-glow {
+            0%, 100% { opacity: 0.86; }
+            50% { opacity: 1; }
+        }
+
+        @keyframes jc-avatar-blink {
+            0%, 41%, 43%, 81%, 83%, 100% { transform: scaleY(1); }
+            42%, 82% { transform: scaleY(0.08); }
+        }
+
+        @keyframes jc-orbit-drift {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes jc-node-glint {
+            0%, 100% { opacity: 0.45; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.35); }
+        }
+
+        @keyframes jc-core-pulse {
+            0%, 100% { opacity: 0.65; transform: scale(0.86); }
+            50% { opacity: 1; transform: scale(1.18); }
+        }
+
+        @keyframes jc-circuit-charge {
+            to { stroke-dashoffset: -88; }
+        }
+
+        @keyframes jc-listening-scan {
+            0% { transform: translateY(-300px); }
+            50% { transform: translateY(300px); }
+            100% { transform: translateY(-300px); }
+        }
+
+        @keyframes jc-listening-radar {
+            0%, 100% { transform: scale(0.96); opacity: 0.55; }
+            50% { transform: scale(1.06); opacity: 1; }
+        }
+
+        @keyframes jc-speaking-mouth {
+            0% { transform: scaleY(0.18); }
+            25% { transform: scaleY(0.92); }
+            55% { transform: scaleY(0.34); }
+            78% { transform: scaleY(1.22); }
+            100% { transform: scaleY(0.42); }
+        }
+
+        @keyframes jc-speaking-nod {
+            from { transform: rotate(0deg) translateY(0); }
+            to { transform: rotate(0.7deg) translateY(2px); }
+        }
+
+        @media (max-width: 640px) {
+            #jc-avatar-portrait {
+                width: min(170vw, 760px);
+                max-height: 94vh;
+                bottom: 0;
+                opacity: 0.78;
+            }
+
+            #jarvis-avatar-wrap::before {
+                width: 124vw;
+                top: 12%;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #jc-avatar-portrait *,
+            #jarvis-avatar-wrap::before {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+
+        /* Scrim keeps the interface readable over the figure */
+        #jc-scrim {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background:
+                linear-gradient(to top, rgba(2, 8, 23, 0.9) 0%, rgba(2, 8, 23, 0.58) 24%, transparent 52%),
+                linear-gradient(to bottom, rgba(2, 8, 23, 0.48), transparent 14%);
+        }
+
+        /* -------- ambient states (CSS glow, independent of WebGL) -------- */
+        body:has(.ai-idle) #jarvis-avatar-wrap::before { opacity: 0.5; }
+        body:has(.ai-armed) #jarvis-avatar-wrap::before { opacity: 0.7; }
+        body:has(.ai-listening) #jarvis-avatar-wrap::before {
+            opacity: 1;
+            animation: jc-listen-pulse 1.2s ease-in-out infinite;
+        }
+        body:has(.ai-thinking) #jarvis-avatar-wrap::before {
+            opacity: 0.85;
+            animation: jc-think-flicker 1.1s ease-in-out infinite;
+        }
+        body:has(.ai-speaking) #jarvis-avatar-wrap::before {
+            opacity: 1;
+            animation: jc-speak-flicker 0.5s ease-in-out infinite;
+        }
+
+        @keyframes jc-listen-pulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+
+        @keyframes jc-think-flicker {
+            0%, 100% { opacity: 0.55; }
+            50% { opacity: 0.9; }
+        }
+
+        @keyframes jc-speak-flicker {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 1; }
+        }
+
+        /* Voice activity bars: live only while listening or speaking */
+        .jc-wave {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            height: 18px;
+            margin-top: 12px;
+        }
+
+        .jc-wave span {
+            width: 2px;
+            height: 3px;
+            border-radius: 2px;
+            background: rgba(var(--jc-cyan), 0.45);
+            transition: background 0.3s ease;
+        }
+
+        .ai-listening .jc-wave span,
+        .ai-speaking .jc-wave span {
+            animation: jc-wave 0.9s ease-in-out infinite;
+        }
+        .ai-listening .jc-wave span { background: rgba(var(--jc-emerald), 0.8); }
+        .ai-speaking .jc-wave span { background: rgba(var(--jc-cyan), 0.9); animation-duration: 0.55s; }
+        .ai-thinking .jc-wave span {
+            background: rgba(var(--jc-violet), 0.8);
+            animation: jc-think-bar 1.2s ease-in-out infinite;
+        }
+
+        .jc-wave span:nth-child(1) { animation-delay: 0ms; }
+        .jc-wave span:nth-child(2) { animation-delay: 70ms; }
+        .jc-wave span:nth-child(3) { animation-delay: 140ms; }
+        .jc-wave span:nth-child(4) { animation-delay: 210ms; }
+        .jc-wave span:nth-child(5) { animation-delay: 280ms; }
+        .jc-wave span:nth-child(6) { animation-delay: 210ms; }
+        .jc-wave span:nth-child(7) { animation-delay: 140ms; }
+        .jc-wave span:nth-child(8) { animation-delay: 70ms; }
+        .jc-wave span:nth-child(9) { animation-delay: 0ms; }
+
+        @keyframes jc-wave {
+            0%, 100% { height: 3px; }
+            50% { height: 16px; }
+        }
+
+        @keyframes jc-think-bar {
+            0%, 100% { height: 3px; opacity: 0.35; }
+            50% { height: 8px; opacity: 1; }
+        }
+
+        #jarvis-state-label {
+            transition: color 0.2s ease;
+        }
+
+        /* PERF: stop all CSS animations when the tab is hidden */
+        html.jc-tab-hidden *,
+        html.jc-tab-hidden *::before,
+        html.jc-tab-hidden *::after {
+            animation-play-state: paused !important;
+        }
+
+        /* ---------- Command bar ---------- */
+        #jarvis-command {
+            transition: box-shadow 0.25s ease, border-color 0.25s ease;
+        }
+
+        #jarvis-command:focus-within {
+            border-color: rgba(var(--jc-cyan), 0.4);
+            box-shadow: 0 0 0 1px rgba(var(--jc-cyan), 0.25), 0 0 36px -8px rgba(var(--jc-cyan), 0.4);
+        }
+
+        /* Visible keyboard focus everywhere */
+        button:focus-visible,
+        a:focus-visible,
+        select:focus-visible {
+            outline: 2px solid rgba(var(--jc-cyan), 0.6);
+            outline-offset: 2px;
+        }
+
+        /* ---------- Console / email reply ---------- */
+        #jarvis-email-view textarea {
+            resize: vertical;
+        }
+
+        #jarvis-email-body {
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .jc-fade-in {
+            animation: jc-fade-in 0.25s ease-out;
+        }
+
+        @keyframes jc-fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .jc-error-message {
+            color: #ef4444;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            body:has(.ai-listening) #jarvis-avatar-wrap::before,
+            body:has(.ai-thinking) #jarvis-avatar-wrap::before,
+            body:has(.ai-speaking) #jarvis-avatar-wrap::before,
+            .ai-listening .jc-wave span,
+            .ai-speaking .jc-wave span,
+            .ai-thinking .jc-wave span,
+            .jc-shimmer-text {
+                animation: none !important;
+            }
+        }
+
+        .jc-new-imap-encryption,
+        .jc-new-smtp-encryption {
+            color-scheme: dark;
+        }
+
+        .jc-new-imap-encryption option,
+        .jc-new-smtp-encryption option {
+            background-color: #111827;
+            color: #ffffff;
+        }
+
+        @media (max-width: 640px) {
+            #jc-grid-bg { display: none; }
+        }
+    </style>
+    <style>
+    /* State colour: the halo, iris rim and pulses all follow this one variable */
+    #jarvis-avatar-wrap { --jc-accent: 110, 231, 255; --jc-mouth: 0; }
+    #jarvis-avatar-wrap[data-state="armed"] { --jc-accent: 88, 220, 218; }
+    #jarvis-avatar-wrap[data-state="listening"] { --jc-accent: 52, 211, 153; }
+    #jarvis-avatar-wrap[data-state="thinking"]  { --jc-accent: 167, 139, 250; }
+ 
+    /* ---------- Voice halo (the signature element) ---------- */
+    #jc-avatar-portrait .jc-halo-ticks {
+        stroke: rgb(var(--jc-accent));
+        stroke-opacity: 0.85;
+        filter: drop-shadow(0 0 6px rgba(var(--jc-accent), 0.55));
+        transition: stroke 0.35s ease;
+    }
+    #jc-avatar-portrait .jc-halo-guide {
+        stroke: rgb(var(--jc-accent));
+        stroke-opacity: 0.22;
+    }
+ 
+    /* ---------- Eyes: blink is driven from JS so the rhythm isn't mechanical ---------- */
+    #jc-avatar-portrait .jc-avatar-eyes {
+        animation: none;
+        transition: transform 0.07s ease-out;
+    }
+    #jc-avatar-portrait .jc-avatar-eyes.jc-blink { transform: scaleY(0.08); }
+    #jc-avatar-portrait .jc-iris-rim { stroke: rgb(var(--jc-accent)); transition: stroke 0.35s ease; }
+ 
+    /* ---------- Brows carry the emotion ---------- */
+    #jc-avatar-portrait .jc-brow {
+        transform-box: fill-box;
+        transform-origin: center;
+        transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    body:has(.ai-listening) #jc-avatar-portrait .jc-brow { transform: translateY(-3px); }
+    body:has(.ai-thinking) #jc-avatar-portrait .jc-brow-l { transform: translateY(-5px) rotate(-4deg); }
+    body:has(.ai-thinking) #jc-avatar-portrait .jc-brow-r { transform: translateY(1px) rotate(2deg); }
+ 
+    /* ---------- Mouth + lower lip ---------- */
+    #jc-avatar-portrait .jc-lip-lower {
+        transform-box: fill-box;
+        transform-origin: center top;
+    }
+    body:has(.ai-speaking) #jc-avatar-portrait .jc-lip-lower {
+        animation: jc-lip-talk 0.34s ease-in-out infinite alternate;
+    }
+    /* When word-boundary events arrive, JS drives the mouth with --jc-mouth */
+    #jarvis-avatar-wrap.jc-mouth-driven #jc-avatar-portrait .jc-mouth-aperture {
+        animation: none !important;
+        transform: scaleY(calc(0.12 + var(--jc-mouth) * 1.1));
+        transition: transform 0.06s linear;
+    }
+    #jarvis-avatar-wrap.jc-mouth-driven #jc-avatar-portrait .jc-lip-lower {
+        animation: none !important;
+        transform: translateY(calc(var(--jc-mouth) * 7px));
+        transition: transform 0.06s linear;
+    }
+    @keyframes jc-lip-talk {
+        from { transform: translateY(1px); }
+        to   { transform: translateY(6px); }
+    }
+ 
+    /* ---------- Hair, bust breathing, rising motes ---------- */
+    #jc-avatar-portrait .jc-hair-front {
+        transform-box: view-box;
+        transform-origin: 450px 100px;
+        animation: jc-hair-sway 6.5s ease-in-out infinite;
+    }
+    @keyframes jc-hair-sway {
+        0%, 100% { transform: rotate(0deg); }
+        50%      { transform: rotate(0.6deg); }
+    }
+ 
+    #jc-avatar-portrait .jc-avatar-bust {
+        animation: jc-bust-glow 5.6s ease-in-out infinite, jc-bust-breathe 4.8s ease-in-out infinite;
+    }
+    @keyframes jc-bust-breathe {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50%      { transform: translateY(-2px) scale(1.004); }
+    }
+ 
+    #jc-avatar-portrait .jc-mote {
+        opacity: 0;
+        animation: jc-mote-rise var(--dur, 9s) linear var(--delay, 0s) infinite;
+    }
+    @keyframes jc-mote-rise {
+        0%   { transform: translate(0, 0); opacity: 0; }
+        15%  { opacity: 0.75; }
+        100% { transform: translate(var(--dx, 0px), -460px); opacity: 0; }
+    }
+ 
+    /* Head tracking wrapper: JS sets the transform */
+    #jc-avatar-portrait .jc-avatar-track {
+        transform-box: view-box;
+        transform-origin: 450px 430px;
+    }
+ 
+    @media (prefers-reduced-motion: reduce) {
+        #jc-avatar-portrait .jc-mote,
+        #jc-avatar-portrait .jc-hair-front,
+        #jc-avatar-portrait .jc-avatar-bust { animation: none !important; }
+    }
+</style>
+<style>
+    #jarvis-avatar-wrap { --jc-wide: 1; --jc-smile: .35; --jc-brow: 0; --jc-level: 0; --jc-pupil: 1; }
+
+    /* Mouth width (visemes) */
+    #jc-avatar-portrait .jc-mouth {
+        transform-box: fill-box;
+        transform-origin: center;
+        transform: scaleX(var(--jc-wide));
+    }
+
+    /* Smile creases fade with mood */
+    #jc-avatar-portrait .jc-smile { stroke-opacity: calc(var(--jc-smile) * .8); }
+
+    /* Brows: state pose stays on `transform`, live emphasis rides on `translate` */
+    #jc-avatar-portrait .jc-brow {
+        translate: 0 calc(var(--jc-brow) * -4px);
+        transition: transform .45s cubic-bezier(.2, .8, .2, 1), translate .1s linear;
+    }
+
+    /* Pupil dilation */
+    #jc-avatar-portrait .jc-pupil {
+        transform-box: fill-box;
+        transform-origin: center;
+        scale: var(--jc-pupil);
+    }
+
+    /* Chest core reacts to speech energy (composes with its existing pulse) */
+    #jc-avatar-portrait .jc-holo-core { scale: calc(1 + var(--jc-level) * .7); }
+
+    /* Thinking bubbles */
+    #jc-avatar-portrait .jc-think-bubbles circle {
+        opacity: 0;
+        transform-box: fill-box;
+        transform-origin: center;
+    }
+    body:has(.ai-thinking) #jc-avatar-portrait .jc-think-bubbles circle {
+        animation: jc-bubble 1.2s ease-in-out infinite;
+    }
+    body:has(.ai-thinking) #jc-avatar-portrait .jc-think-bubbles circle:nth-child(2) { animation-delay: .2s; }
+    body:has(.ai-thinking) #jc-avatar-portrait .jc-think-bubbles circle:nth-child(3) { animation-delay: .4s; }
+    @keyframes jc-bubble {
+        0%, 100% { opacity: .2; transform: scale(.8); }
+        50%      { opacity: 1;  transform: scale(1.2); }
+    }
+
+    /* Scan sweep: travels down the figure, then rests */
+    #jc-avatar-portrait .jc-sweep { animation: jc-sweep 11s linear infinite; opacity: 0; }
+    body:has(.ai-listening) #jc-avatar-portrait .jc-sweep { animation-duration: 4.5s; }
+    @keyframes jc-sweep {
+        0%   { transform: translateY(0);     opacity: 0; }
+        6%   { opacity: 1; }
+        55%  { transform: translateY(940px); opacity: 1; }
+        62%, 100% { transform: translateY(940px); opacity: 0; }
+    }
+
+    /* Rare hologram glitch (also fires on wake) */
+    #jc-avatar-portrait.jc-glitch { animation: jc-glitch .24s steps(4) 1; }
+    @keyframes jc-glitch {
+        0%   { translate: 0 0;   filter: drop-shadow(-3px 0 0 rgba(255, 90, 170, .55)) drop-shadow(3px 0 0 rgba(90, 255, 255, .55)); }
+        25%  { translate: 7px 0; filter: drop-shadow(-6px 0 0 rgba(255, 90, 170, .55)) drop-shadow(6px 0 0 rgba(90, 255, 255, .55)); }
+        50%  { translate: -6px 0; filter: drop-shadow(5px 0 0 rgba(255, 90, 170, .55)) drop-shadow(-5px 0 0 rgba(90, 255, 255, .55)); }
+        75%  { translate: 3px 0; filter: drop-shadow(-2px 0 0 rgba(255, 90, 170, .4)) drop-shadow(2px 0 0 rgba(90, 255, 255, .4)); }
+        100% { translate: 0 0;   filter: drop-shadow(0 0 28px rgba(25, 185, 255, .22)); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        #jc-avatar-portrait .jc-sweep,
+        #jc-avatar-portrait .jc-think-bubbles circle,
+        #jc-avatar-portrait.jc-glitch { animation: none !important; }
+    }
+</style>
+</head>
+
+<body>
+
+    <canvas id="jc-network-bg"></canvas>
+    <div id="jc-grid-bg" aria-hidden="true"></div>
+
+    {{-- Full-screen holographic portrait; state classes drive the face and listening gesture. --}}
+    <div id="jarvis-avatar-wrap" aria-hidden="true">
+        <svg id="jc-avatar-portrait" viewBox="0 0 900 860" role="presentation" focusable="false">
+            <defs>
+                <radialGradient id="jc-face-glass" cx="50%" cy="34%" r="72%">
+                    <stop offset="0" stop-color="#d9ffff" stop-opacity=".82" />
+                    <stop offset=".42" stop-color="#44d9ff" stop-opacity=".38" />
+                    <stop offset="1" stop-color="#0870c9" stop-opacity=".12" />
+                </radialGradient>
+                <linearGradient id="jc-holo-stroke" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="#d7ffff" />
+                    <stop offset=".48" stop-color="#67e8ff" />
+                    <stop offset="1" stop-color="#178dff" />
+                </linearGradient>
+                <linearGradient id="jc-holo-dim" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#35cfff" stop-opacity=".08" />
+                    <stop offset=".5" stop-color="#c1faff" stop-opacity=".72" />
+                    <stop offset="1" stop-color="#278dff" stop-opacity=".08" />
+                </linearGradient>
+                <linearGradient id="jc-holo-body" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#a9f5ff" stop-opacity=".42" />
+                    <stop offset=".5" stop-color="#139bdb" stop-opacity=".26" />
+                    <stop offset="1" stop-color="#06427f" stop-opacity=".13" />
+                </linearGradient>
+                <radialGradient id="jc-holo-aura" cx="50%" cy="44%" r="54%">
+                    <stop offset="0" stop-color="#62efff" stop-opacity=".4" />
+                    <stop offset=".48" stop-color="#0b9dfb" stop-opacity=".13" />
+                    <stop offset="1" stop-color="#0874dc" stop-opacity="0" />
+                </radialGradient>
+                <linearGradient id="jc-holo-platform" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#65eaff" stop-opacity=".36" />
+                    <stop offset=".22" stop-color="#0d74ba" stop-opacity=".56" />
+                    <stop offset="1" stop-color="#04152b" stop-opacity=".95" />
+                </linearGradient>
+                <linearGradient id="jc-face-highlight" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#d8ffff" stop-opacity=".45" />
+                    <stop offset=".24" stop-color="#b8faff" stop-opacity=".1" />
+                    <stop offset=".55" stop-color="#37caff" stop-opacity="0" />
+                    <stop offset="1" stop-color="#2bbaff" stop-opacity=".16" />
+                </linearGradient>
+                <pattern id="jc-holo-scanlines" width="5" height="8" patternUnits="userSpaceOnUse">
+                    <path d="M0 1 H5" stroke="#d7ffff" stroke-opacity=".22" stroke-width=".7" />
+                </pattern>
+        
+                {{-- New: iris, cheeks, lips, hair --}}
+                <radialGradient id="jc-iris" cx="50%" cy="50%" r="50%">
+                    <stop offset="0" stop-color="#f4ffff" />
+                    <stop offset=".38" stop-color="#7df2ff" />
+                    <stop offset=".78" stop-color="#1a9be8" />
+                    <stop offset="1" stop-color="#0a4a94" />
+                </radialGradient>
+                <radialGradient id="jc-cheek" cx="50%" cy="50%" r="50%">
+                    <stop offset="0" stop-color="#8ff3ff" stop-opacity=".22" />
+                    <stop offset="1" stop-color="#8ff3ff" stop-opacity="0" />
+                </radialGradient>
+                <linearGradient id="jc-lip" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#a6f6ff" stop-opacity=".62" />
+                    <stop offset="1" stop-color="#1a8fe0" stop-opacity=".5" />
+                </linearGradient>
+                <linearGradient id="jc-hair" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#9ff3ff" stop-opacity=".42" />
+                    <stop offset=".55" stop-color="#2a7ee0" stop-opacity=".3" />
+                    <stop offset="1" stop-color="#0a3f86" stop-opacity=".14" />
+                </linearGradient>
+                <linearGradient id="jc-hair-line" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#e3ffff" stop-opacity=".9" />
+                    <stop offset="1" stop-color="#3fb8ff" stop-opacity=".2" />
+                </linearGradient>
+        
+                <clipPath id="jc-face-clip">
+                    <path d="M450 92 C378 92 330 145 328 225 C326 270 330 300 342 335 C356 378 396 410 450 424 C504 410 544 378 558 335 C570 300 574 270 572 225 C570 145 522 92 450 92Z" />
+                </clipPath>
+                <clipPath id="jc-eye-l-clip"><path d="M365 267 Q390 250 417 266 Q395 286 365 267Z" /></clipPath>
+                <clipPath id="jc-eye-r-clip"><path d="M483 266 Q510 250 535 267 Q505 286 483 266Z" /></clipPath>
+                <clipPath id="jc-bust-clip">
+                    <path d="M397 397 L397 458 C345 466 292 480 251 513 C207 548 181 610 166 690 C160 722 179 745 218 753 C282 767 360 776 450 776 C540 776 618 767 682 753 C721 745 740 722 734 690 C719 610 693 548 649 513 C608 480 555 466 503 458 L503 397Z" />
+                </clipPath>
+            </defs>
+        
+            <ellipse cx="450" cy="394" rx="350" ry="384" fill="url(#jc-holo-aura)" />
+        
+            {{-- Voice halo: a 270-degree ring of ticks. JS fills #jc-halo-ticks every frame. --}}
+            <path class="jc-halo-guide" d="M270.4 434.6 A255 255 0 1 1 629.6 434.6" fill="none" stroke-width="1" stroke-dasharray="2 9" />
+            <path id="jc-halo-ticks" class="jc-halo-ticks" fill="none" stroke-width="2.2" stroke-linecap="round" />
+        
+            {{-- Fine holographic cage --}}
+            <g class="jc-avatar-orbit" fill="none" stroke="url(#jc-holo-dim)" stroke-width="1.15" opacity=".62">
+                <path d="M450 44 L563 81 L628 154 L648 264 L620 370 L560 435 L450 469 L340 435 L280 370 L252 264 L272 154 L337 81Z" />
+                <path d="M450 44 L450 139 L563 81 L531 173 L628 154 L553 245 L648 264 L553 302 L620 370 L523 353 L560 435 L477 378 L450 469 L423 378 L340 435 L377 353 L280 370 L347 302 L252 264 L347 245 L272 154 L369 173 L337 81Z" />
+                <path d="M337 81 L369 173 L347 245 L377 353 L423 378 M563 81 L531 173 L553 245 L523 353 L477 378 M272 154 L369 173 L450 139 L531 173 L628 154 M252 264 L347 245 L450 265 L553 245 L648 264" />
+                <circle cx="450" cy="265" r="205" stroke-dasharray="2 12" opacity=".58" />
+                <circle cx="450" cy="265" r="228" stroke-dasharray="1 16" opacity=".44" />
+                <path d="M450 46 V17 M252 264 H220 M648 264 H680 M450 468 V503" stroke-width="2" />
+                <circle class="jc-avatar-node" cx="450" cy="44" r="4" fill="#d8ffff" />
+                <circle class="jc-avatar-node" cx="648" cy="264" r="3.5" fill="#9af4ff" />
+                <circle class="jc-avatar-node" cx="280" cy="370" r="3" fill="#9af4ff" />
+                <circle class="jc-avatar-node" cx="563" cy="81" r="3" fill="#d8ffff" />
+            </g>
+        
+            {{-- Side readouts, pushed outward so the halo has room --}}
+            <g transform="translate(-34 0)" fill="none" stroke="#6feaff" stroke-opacity=".4" stroke-width="1.2">
+                <path d="M114 268 H239 V424 H128 V307 H94 V199 H181" />
+                <path d="M125 286 H220 M125 296 H201 M125 306 H211 M125 316 H186 M125 397 H219" />
+                <rect x="125" y="329" width="94" height="55" rx="2" fill="#0a74ac" fill-opacity=".1" />
+                <path d="M132 370 L146 357 L157 363 L171 342 L184 351 L207 335" />
+                <path class="jc-hud-line" d="M87 233 H177 M114 448 H205" />
+                <circle class="jc-avatar-node" cx="94" cy="199" r="3" fill="#b8f9ff" />
+            </g>
+            <g transform="translate(34 0)" fill="none" stroke="#6feaff" stroke-opacity=".4" stroke-width="1.2">
+                <path d="M786 263 H658 V429 H770 V304 H806 V192 H719" />
+                <path d="M680 282 H759 M680 292 H735 M680 302 H751 M680 312 H721 M680 401 H759" />
+                <rect x="681" y="323" width="78" height="64" rx="2" fill="#0a74ac" fill-opacity=".1" />
+                <circle cx="720" cy="355" r="20" />
+                <circle cx="720" cy="355" r="12" stroke-dasharray="3 4" />
+                <path d="M720 335 V343 M740 355 H732 M720 375 V367 M700 355 H708" />
+                <path class="jc-hud-line" d="M723 225 H812 M697 453 H787" />
+                <circle class="jc-avatar-node" cx="806" cy="192" r="3" fill="#b8f9ff" />
+            </g>
+        
+            {{-- Bust --}}
+            <g class="jc-avatar-bust">
+                <path d="M397 397 L397 458 C345 466 292 480 251 513 C207 548 181 610 166 690 C160 722 179 745 218 753 C282 767 360 776 450 776 C540 776 618 767 682 753 C721 745 740 722 734 690 C719 610 693 548 649 513 C608 480 555 466 503 458 L503 397Z" fill="url(#jc-holo-body)" stroke="url(#jc-holo-stroke)" stroke-width="2.2" />
+                <g clip-path="url(#jc-bust-clip)" fill="none" stroke="url(#jc-holo-dim)" stroke-width="1.1" opacity=".8">
+                    <path d="M183 589 L279 530 L345 572 L407 493 L450 541 L511 493 L555 572 L621 530 L717 589 M174 658 L271 611 L339 655 L407 584 L450 618 L493 584 L561 655 L629 611 L726 658 M210 731 L299 676 L371 718 L450 652 L529 718 L601 676 L690 731" />
+                    <path d="M279 530 L271 611 L299 676 M345 572 L339 655 L371 718 M407 493 L407 584 L450 652 M450 541 V618 M511 493 L493 584 L450 652 M555 572 L561 655 L529 718 M621 530 L629 611 L601 676" />
+                    <path d="M234 505 C273 573 272 647 241 738 M310 478 C335 563 334 655 313 760 M385 464 C397 550 397 656 390 773 M515 464 C503 550 503 656 510 773 M590 478 C565 563 566 655 587 760 M666 505 C627 573 628 647 659 738" opacity=".44" />
+                </g>
+                <rect x="150" y="440" width="600" height="340" clip-path="url(#jc-bust-clip)" fill="url(#jc-holo-scanlines)" opacity=".36" />
+                <path d="M397 397 L397 458 C345 466 292 480 251 513 C207 548 181 610 166 690 C160 722 179 745 218 753 C282 767 360 776 450 776 C540 776 618 767 682 753 C721 745 740 722 734 690 C719 610 693 548 649 513 C608 480 555 466 503 458 L503 397Z" fill="none" stroke="#d4ffff" stroke-opacity=".24" stroke-width="7" />
+                <circle cx="450" cy="607" r="25" fill="#36cfff" fill-opacity=".05" stroke="#82f2ff" stroke-opacity=".62" stroke-width="1.2" stroke-dasharray="3 6" />
+                <circle cx="450" cy="607" r="17" fill="none" stroke="#bdfaff" stroke-opacity=".35" stroke-width="1" />
+                <g fill="#d8ffff">
+                    <circle class="jc-holo-node" cx="279" cy="530" r="3" />
+                    <circle class="jc-holo-node" cx="407" cy="493" r="3.2" />
+                    <circle class="jc-holo-node" cx="511" cy="493" r="3.2" />
+                    <circle class="jc-holo-node" cx="621" cy="530" r="3" />
+                    <circle class="jc-holo-node" cx="339" cy="655" r="2.5" />
+                    <circle class="jc-holo-node" cx="561" cy="655" r="2.5" />
+                    <circle class="jc-holo-node" cx="220" cy="633" r="2" />
+                    <circle class="jc-holo-node" cx="270" cy="702" r="2.2" />
+                    <circle class="jc-holo-node" cx="319" cy="576" r="1.8" />
+                    <circle class="jc-holo-node" cx="366" cy="693" r="2" />
+                    <circle class="jc-holo-node" cx="450" cy="541" r="2.2" />
+                    <circle class="jc-holo-node" cx="450" cy="718" r="2" />
+                    <circle class="jc-holo-node" cx="534" cy="693" r="2" />
+                    <circle class="jc-holo-node" cx="581" cy="576" r="1.8" />
+                    <circle class="jc-holo-node" cx="630" cy="702" r="2.2" />
+                    <circle class="jc-holo-node" cx="680" cy="633" r="2" />
+                    <circle class="jc-holo-core" cx="450" cy="607" r="8" />
+                </g>
+                <path d="M397 438 Q450 469 503 438 M398 458 Q450 486 502 458 M450 616 V756 M270 546 L307 574 L289 620 M630 546 L593 574 L611 620" fill="none" stroke="url(#jc-holo-dim)" stroke-width="1.5" opacity=".7" />
+            </g>
+        
+            {{-- Head. The outer group is moved by JS (cursor tracking); the inner group keeps the CSS breathing/nodding. --}}
+            <g class="jc-avatar-track" id="jc-avatar-track">
+                <g class="jc-avatar-head" stroke="url(#jc-holo-stroke)" stroke-linecap="round" stroke-linejoin="round">
+        
+                    {{-- Hair, back layer: frames the jaw --}}
+                    <path d="M326 236 C312 130 372 70 450 70 C528 70 588 130 574 236 C592 292 588 352 564 398 Q548 400 540 384 L360 384 Q352 400 336 398 C312 352 308 292 326 236Z" fill="url(#jc-hair)" stroke-opacity=".45" stroke-width="1.4" />
+        
+                    {{-- Face --}}
+                    <path d="M450 92 C378 92 330 145 328 225 C326 270 330 300 342 335 C356 378 396 410 450 424 C504 410 544 378 558 335 C570 300 574 270 572 225 C570 145 522 92 450 92Z" fill="url(#jc-face-glass)" stroke-width="2.4" />
+                    <g clip-path="url(#jc-face-clip)" fill="none" stroke="url(#jc-holo-dim)" stroke-width="1.1" opacity=".85">
+                        <path d="M318 157 L375 190 L450 140 L525 190 L582 157 M314 217 L375 235 L450 202 L525 235 L586 217 M315 278 L371 266 L450 302 L529 266 L585 278 M329 338 L392 316 L450 352 L508 316 L571 338 M360 382 L414 367 L450 398 L486 367 L540 382" />
+                        <path d="M375 190 L375 235 L371 266 L392 316 L414 367 M450 140 L450 202 L450 302 L450 352 L450 398 M525 190 L525 235 L529 266 L508 316 L486 367 M318 157 L314 217 L315 278 L329 338 L360 382 M582 157 L586 217 L585 278 L571 338 L540 382" />
+                        <path d="M331 186 Q450 229 569 186 M325 304 Q450 346 575 304" opacity=".55" />
+                    </g>
+                    <path d="M450 92 C378 92 330 145 328 225 C326 270 330 300 342 335 C356 378 396 410 450 424 C504 410 544 378 558 335 C570 300 574 270 572 225 C570 145 522 92 450 92Z" fill="url(#jc-face-highlight)" class="jc-face-highlight" stroke="none" />
+                    <rect x="315" y="90" width="270" height="340" clip-path="url(#jc-face-clip)" fill="url(#jc-holo-scanlines)" opacity=".42" />
+                    <ellipse cx="378" cy="326" rx="36" ry="22" fill="url(#jc-cheek)" stroke="none" />
+                    <ellipse cx="522" cy="326" rx="36" ry="22" fill="url(#jc-cheek)" stroke="none" />
+                    <path d="M350 193 Q333 265 356 320 M550 193 Q567 265 544 320 M372 366 Q450 396 528 366" fill="none" stroke="#d8ffff" stroke-opacity=".3" stroke-width="1.4" />
+                    <circle class="jc-holo-node" cx="337" cy="284" r="2.4" fill="#d8ffff" stroke="none" />
+                    <circle class="jc-holo-node" cx="563" cy="284" r="2.4" fill="#d8ffff" stroke="none" />
+        
+                    {{-- Hair, front layer: swept fringe with light strands --}}
+                    <g class="jc-hair-front">
+                        <path d="M328 232 C322 150 376 96 450 92 C524 96 578 150 572 232 C560 190 540 152 500 132 C480 150 440 158 404 150 C372 168 344 196 328 232Z" fill="url(#jc-hair)" fill-opacity=".9" stroke-opacity=".55" stroke-width="1.6" />
+                        <g fill="none" stroke="url(#jc-hair-line)" stroke-width="1.1" opacity=".75">
+                            <path d="M450 93 C420 100 380 130 352 200" />
+                            <path d="M450 93 C430 110 400 140 380 190" />
+                            <path d="M470 100 C505 108 545 140 562 205" />
+                            <path d="M480 108 C510 122 535 150 548 190" />
+                            <path d="M404 150 C384 165 366 190 352 224" />
+                            <path d="M500 132 C520 150 540 178 552 214" />
+                        </g>
+                    </g>
+        
+                    {{-- Brows --}}
+                    <path class="jc-brow jc-brow-l" d="M352 243 Q385 222 419 240" fill="none" stroke-width="3.4" opacity=".88" />
+                    <path class="jc-brow jc-brow-r" d="M481 240 Q515 222 548 243" fill="none" stroke-width="3.4" opacity=".88" />
+        
+                    {{-- Eyes: sclera, tracking iris, lash line. JS moves .jc-gaze-l / .jc-gaze-r --}}
+                    <g class="jc-avatar-eyes">
+                        <path d="M365 267 Q390 250 417 266 Q395 286 365 267Z M483 266 Q510 250 535 267 Q505 286 483 266Z" fill="#cfeeff" fill-opacity=".5" stroke-width="1.6" />
+                        <g clip-path="url(#jc-eye-l-clip)">
+                            <g class="jc-gaze jc-gaze-l">
+                                <circle cx="391" cy="267" r="11" fill="url(#jc-iris)" stroke="none" />
+                                <circle class="jc-iris-rim" cx="391" cy="267" r="11" fill="none" stroke-width="1.4" />
+                                <circle class="jc-pupil" cx="391" cy="267" r="4.6" fill="#03152e" stroke="none" />
+                                <circle cx="394.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
+                            </g>
+                        </g>
+                        <g clip-path="url(#jc-eye-r-clip)">
+                            <g class="jc-gaze jc-gaze-r">
+                                <circle cx="509" cy="267" r="11" fill="url(#jc-iris)" stroke="none" />
+                                <circle class="jc-iris-rim" cx="509" cy="267" r="11" fill="none" stroke-width="1.4" />
+                                <circle class="jc-pupil" cx="509" cy="267" r="4.6" fill="#03152e" stroke="none" />
+                                <circle cx="512.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
+                            </g>
+                        </g>
+                        <path d="M363 268 Q390 246 419 265 M481 265 Q510 246 537 268" fill="none" stroke-width="2.6" />
+                        <path d="M372 277 Q392 288 410 277 M490 277 Q508 288 528 277" fill="none" stroke-width="1" opacity=".45" />
+                    </g>
+        
+                    {{-- Nose --}}
+                    <path d="M450 272 L441 326 Q450 334 459 326 M434 338 Q450 348 466 338" fill="none" stroke-width="1.6" opacity=".8" />
+
+                    {{-- Smile creases (opacity driven by --jc-smile) --}}
+                    <path class="jc-smile" d="M406 368 Q396 380 404 394 M494 368 Q504 380 496 394" fill="none" stroke-width="1.3" stroke-linecap="round" />
+        
+                    {{-- Mouth: shadow, aperture, upper lip, lower lip (moves with speech) --}}
+                    <g class="jc-mouth">
+                    <path d="M416 381 Q450 373 484 381 Q450 397 416 381Z" fill="#051832" fill-opacity=".6" stroke="none" />
+                    <ellipse class="jc-mouth-aperture" cx="450" cy="381" rx="27" ry="10" fill="#020b1a" stroke="#c5faff" stroke-width="1.4" />
+                    <path d="M413 381 Q430 368 450 374 Q470 368 487 381 Q468 384 450 383 Q432 384 413 381Z" fill="url(#jc-lip)" stroke-width="1.4" />
+                    <g class="jc-lip-lower">
+                        <path d="M418 383 Q450 385 482 383 Q470 404 450 405 Q430 404 418 383Z" fill="url(#jc-lip)" fill-opacity=".85" stroke-width="1.4" />
+                    </g>
+                    <path d="M428 414 Q450 422 472 414" fill="none" stroke-width="1.2" opacity=".5" />
+                    </g>
+        
+                    {{-- Scan line (listening) --}}
+                    <g clip-path="url(#jc-face-clip)" class="jc-avatar-scan">
+                        <path d="M285 0 H615 V3 H285Z" fill="#e1ffff" opacity=".8" />
+                        <path d="M285 0 H615" stroke="#6cecff" stroke-width="14" opacity=".2" />
+                    </g>
+                </g>
+            </g>
+        
+            {{-- Thinking cue --}}
+            <g class="jc-think-bubbles" fill="#d8ffff" stroke="none">
+                <circle cx="598" cy="152" r="2.6" />
+                <circle cx="612" cy="133" r="3.8" />
+                <circle cx="632" cy="108" r="5.4" />
+            </g>
+
+            {{-- Whole-figure scan sweep --}}
+            <defs>
+                <linearGradient id="jc-sweep-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#9ff3ff" stop-opacity="0" />
+                    <stop offset=".85" stop-color="#9ff3ff" stop-opacity=".26" />
+                    <stop offset="1" stop-color="#e6ffff" stop-opacity=".7" />
+                </linearGradient>
+                <linearGradient id="jc-sweep-fade" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#000" />
+                    <stop offset=".25" stop-color="#fff" />
+                    <stop offset=".75" stop-color="#fff" />
+                    <stop offset="1" stop-color="#000" />
+                </linearGradient>
+                <mask id="jc-sweep-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="900" height="860">
+                    <rect width="900" height="860" fill="url(#jc-sweep-fade)" />
+                </mask>
+            </defs>
+            <g mask="url(#jc-sweep-mask)" aria-hidden="true">
+                <rect class="jc-sweep" x="0" y="-80" width="900" height="80" fill="url(#jc-sweep-grad)" />
+            </g>
+
+            {{-- Listening gesture --}}
+            <g class="jc-avatar-listen-gesture" fill="none" stroke="url(#jc-holo-stroke)" stroke-linecap="round">
+                <path d="M311 225 Q276 266 311 307 M297 207 Q247 266 297 325 M589 225 Q624 266 589 307 M603 207 Q653 266 603 325" stroke-width="2.4" />
+                <path d="M302 266 H287 M598 266 H613" stroke-width="2" />
+                <circle cx="287" cy="266" r="3" fill="#d8ffff" stroke="none" />
+                <circle cx="613" cy="266" r="3" fill="#d8ffff" stroke="none" />
+            </g>
+        
+            {{-- Rising light motes (filled by JS) --}}
+            <g id="jc-motes" fill="#bff8ff"></g>
+        
+            {{-- Projector pedestal and floor rings --}}
+            <g fill="none" stroke-linecap="round">
+                <path d="M0 819 H207 L296 786 M900 819 H693 L604 786 M0 843 H330 L382 797 M900 843 H570 L518 797" stroke="#238ed2" stroke-opacity=".35" stroke-width="1.3" />
+                <ellipse cx="450" cy="807" rx="392" ry="29" stroke="#45d8ff" stroke-opacity=".72" stroke-width="2" />
+                <ellipse cx="450" cy="807" rx="337" ry="22" stroke="#1586d2" stroke-opacity=".42" stroke-width="1.2" />
+                <path d="M130 779 Q450 741 770 779 L747 806 Q450 839 153 806Z" fill="url(#jc-holo-platform)" stroke="#46ddff" stroke-width="1.6" />
+                <ellipse cx="450" cy="777" rx="320" ry="35" fill="#06315c" fill-opacity=".72" stroke="#7cecff" stroke-width="2" />
+                <ellipse cx="450" cy="775" rx="258" ry="23" stroke="#28cfff" stroke-width="4" />
+                <ellipse cx="450" cy="775" rx="212" ry="14" stroke="#bcfaff" stroke-width="2.2" />
+                <ellipse cx="450" cy="775" rx="148" ry="7" stroke="#28bbff" stroke-opacity=".7" stroke-width="1.4" />
+                <path d="M450 779 V821 M430 778 V794 M470 778 V794" stroke="#8af0ff" stroke-opacity=".64" stroke-width="1.2" />
+            </g>
+        </svg>
+    </div>
+    <div id="jc-scrim" aria-hidden="true"></div>
+
+    <div id="jc-app" class="flex h-screen w-full">
+
+        {{-- Backdrop shown only while the inbox drawer is open --}}
+        <div
+            id="jc-inbox-backdrop"
+            class="fixed inset-0 z-30 hidden bg-black/50 backdrop-blur-[2px]"
+        ></div>
+
+        {{-- LEFT: EMAIL PANEL (hidden by default, opens on demand; emails load lazily via JS) --}}
+        <aside
+            id="jc-inbox-drawer"
+            class="jc-glass-strong fixed inset-y-0 left-0 z-40 flex w-[340px] max-w-full -translate-x-full flex-col border-r border-white/10 transition-transform duration-300 ease-out"
+            aria-hidden="true"
+        >
+
+            {{-- Header --}}
+            <div class="flex h-16 items-center justify-between border-b border-white/10 px-5">
+
+                <div>
+                    <div class="jc-shimmer-text text-sm font-semibold tracking-[0.25em]" data-ai-name>
+                        JC
+                    </div>
+
+                    <div class="mt-1 text-[10px] uppercase tracking-widest text-white/30">
+                        Email Intelligence
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3">
+
+                    <div class="flex items-center gap-2">
+                        <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+
+                        <span class="text-[10px] uppercase tracking-wider text-emerald-400">
+                            Online
+                        </span>
+                    </div>
+
+                    <button
+                        type="button"
+                        id="jc-inbox-close"
+                        aria-label="Close inbox"
+                        class="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-white/10 hover:text-white"
+                    >
+                        ✕
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            {{-- Email Summary (counts are filled in by JS) --}}
+            <div class="border-b border-white/10 px-5 py-4">
+
+                <div class="mb-3 text-[10px] uppercase tracking-[0.2em] text-white/30">
+                    Inbox
+                </div>
+
+                <div class="grid grid-cols-3 gap-2">
+
+                    <div class="rounded-lg border border-red-400/10 bg-red-400/5 p-3">
+                        <div id="jc-count-urgent" class="text-lg font-semibold text-red-400">0</div>
+                        <div class="mt-1 text-[9px] uppercase text-white/30">
+                            Urgent
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg border border-orange-400/10 bg-orange-400/5 p-3">
+                        <div id="jc-count-high" class="text-lg font-semibold text-orange-400">0</div>
+                        <div class="mt-1 text-[9px] uppercase text-white/30">
+                            High
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                        <div id="jc-count-total" class="text-lg font-semibold text-white">0</div>
+                        <div class="mt-1 text-[9px] uppercase text-white/30">
+                            Emails
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            {{-- Email List --}}
+            <div class="flex-1 overflow-y-auto">
+
+                <div class="flex items-center justify-between border-b border-white/5 px-5 py-3">
+                    <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">
+                        Recent Emails
+                    </div>
+                    <button type="button" id="jc-inbox-refresh"
+                        class="text-[10px] uppercase tracking-widest text-white/30 transition hover:text-white/70">
+                        Refresh
+                    </button>
+                </div>
+
+                <div id="jc-inbox-mailbox" class="truncate border-b border-white/5 px-5 py-2 text-[10px] text-white/30"></div>
+
+                <div id="jc-inbox-list">
+                    <div class="px-5 py-8 text-center text-xs text-white/30">
+                        Open the inbox to load emails.
+                    </div>
+                </div>
+
+            </div>
+
+        </aside>
+
+        {{-- Settings backdrop + drawer --}}
+        <div id="jc-settings-backdrop" class="fixed inset-0 z-50 hidden bg-black/50 backdrop-blur-[2px]"></div>
+
+        <aside
+            id="jc-settings-drawer"
+            class="jc-glass-strong fixed inset-y-0 right-0 z-[60] flex w-[400px] max-w-full translate-x-full flex-col border-l border-white/10 transition-transform duration-300 ease-out"
+            aria-hidden="true"
+        >
+            <div class="flex h-16 items-center justify-between border-b border-white/10 px-5">
+                <div>
+                    <div class="jc-shimmer-text text-sm font-semibold tracking-[0.25em]" data-ai-name>JC</div>
+                    <div class="mt-1 text-[10px] uppercase tracking-widest text-white/30">Settings</div>
+                </div>
+                <button type="button" id="jc-settings-close" aria-label="Close settings"
+                    class="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-white/10 hover:text-white">✕</button>
+            </div>
+
+            {{-- Tabs --}}
+            <div class="flex border-b border-white/10 text-[10px] uppercase tracking-wider">
+                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white" data-tab="identity">Identity</button>
+                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="apikey">API Key</button>
+                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="scope">Scope</button>
+                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="workflow">Workflow</button>
+                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="email">Email</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto px-5 py-5">
+
+                {{-- IDENTITY --}}
+                <div class="jc-tab-panel space-y-4" data-panel="identity">
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">AI name</span>
+                        <input id="jc-set-ai-name" type="text" maxlength="30" placeholder="JC"
+                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                        <span class="mt-1 block text-[10px] text-white/30">Also becomes the wake word, e.g. "Hello &lt;name&gt;".</span>
+                    </label>
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Owner's name</span>
+                        <input id="jc-set-owner-name" type="text" maxlength="60" placeholder="Your name"
+                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                    </label>
+                </div>
+
+                {{-- API KEY --}}
+                <div class="jc-tab-panel hidden space-y-4" data-panel="apikey">
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Anthropic API key</span>
+                        <div class="mt-2 flex gap-2">
+                            <input id="jc-set-api-key" type="password" autocomplete="off" placeholder="sk-ant-..."
+                                class="h-11 flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            <button type="button" id="jc-toggle-key"
+                                class="rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-white/50 hover:text-white">Show</button>
+                        </div>
+                        <span id="jc-key-status" class="mt-2 block text-[10px] text-white/30">No key saved.</span>
+                    </label>
+                    <p class="text-[11px] leading-5 text-white/30">
+                        The key is sent to your server and stored encrypted. It is never kept in the browser
+                        and never shown again. Leave blank to keep the current key.
+                    </p>
+                </div>
+
+                {{-- SCOPE / LIMITS --}}
+                <div class="jc-tab-panel hidden space-y-5" data-panel="scope">
+                    <div>
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">What may the AI do?</div>
+                        <div class="mt-2 space-y-2 text-sm text-white/70">
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="read_emails" checked> Read emails</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="search_emails" checked> Search emails</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="draft_replies" checked> Draft replies</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="send_replies"> Send replies</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="send_emails"> Send new emails</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="analysis" checked> Analysis &amp; summaries</label>
+                        </div>
+                    </div>
+
+                    <label class="flex items-center gap-2 text-sm text-white/70">
+                        <input type="checkbox" id="jc-set-confirm-send" checked>
+                        Always ask me before sending anything
+                    </label>
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Tone</span>
+                        <select id="jc-set-tone"
+                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-[#0b0d10] px-3 text-sm text-white outline-none">
+                            <option value="professional">Professional</option>
+                            <option value="friendly">Friendly</option>
+                            <option value="concise">Concise</option>
+                            <option value="formal">Formal</option>
+                        </select>
+                    </label>
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Daily credit limit (0 = unlimited)</span>
+                        <input id="jc-set-credit-limit" type="number" min="0" step="1" value="0"
+                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none focus:border-white/25">
+                    </label>
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Scope of work</span>
+                        <textarea id="jc-set-scope" rows="3" placeholder="e.g. Handle warranty, invoice and IT support emails only."
+                            class="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25"></textarea>
+                    </label>
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Limitations / never do</span>
+                        <textarea id="jc-set-limits" rows="3" placeholder="e.g. Never share pricing. Never delete emails. Escalate legal matters to me."
+                            class="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25"></textarea>
+                    </label>
+                </div>
+
+                {{-- WORKFLOW --}}
+                <div class="jc-tab-panel hidden space-y-4" data-panel="workflow">
+                    <p class="text-sm leading-6 text-white/50">
+                        Build and manage the automations your AI runs (triggers, actions, schedules).
+                    </p>
+                    <a id="jc-workflow-link" href="{{ url('/jarvis/workflows') }}"
+                    class="flex h-11 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-sm font-medium text-cyan-300 transition hover:bg-cyan-400/20">
+                        Open AI Automation Workflow
+                    </a>
+                </div>
+
+                {{-- EMAIL (one mailbox per user) --}}
+                <div class="jc-tab-panel hidden space-y-4" data-panel="email">
+
+                    <div>
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Mailbox</div>
+                        <p class="mt-1 text-xs text-white/40">
+                            Register the mailbox JC uses to read and send email. The email address is also used
+                            as the IMAP and SMTP username.
+                        </p>
+                    </div>
+
+                    {{-- Registered mailbox summary --}}
+                    <div id="jc-active-mailbox-card" class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Registered mailbox</div>
+
+                        {{-- Shown when no email is registered --}}
+                        <div id="jc-am-empty" class="mt-2">
+                            <div class="text-sm text-white/70">No email registered yet.</div>
+                            <button type="button" id="jc-am-add"
+                                class="mt-3 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs text-white transition hover:bg-white/[0.08]">
+                                + Add Email
+                            </button>
+                        </div>
+
+                        {{-- Shown when an email is registered --}}
+                        <div id="jc-am-registered" class="mt-2 hidden">
+                            <div class="flex items-start justify-between gap-3">
+                                <div id="jc-am-address" class="min-w-0 truncate text-sm font-medium text-white"></div>
+                                <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                                    <span class="rounded-full bg-emerald-400/10 px-2 py-1 text-[9px] uppercase tracking-wider text-emerald-300">✓ Active</span>
+                                    <span class="rounded-full bg-white/5 px-2 py-1 text-[9px] uppercase tracking-wider text-white/50">★ Default</span>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 grid grid-cols-2 gap-2">
+                                <div class="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                                    <div class="text-[9px] uppercase tracking-wider text-white/30">IMAP</div>
+                                    <div id="jc-am-imap" class="mt-1 truncate text-xs text-white/60">-</div>
+                                </div>
+                                <div class="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                                    <div class="text-[9px] uppercase tracking-wider text-white/30">SMTP</div>
+                                    <div id="jc-am-smtp" class="mt-1 truncate text-xs text-white/60">-</div>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 text-[10px] text-white/30">Password: <span id="jc-am-pw">••••••••</span></div>
+
+                            <div id="jc-am-warning" class="mt-3 hidden rounded-lg border border-white/10 bg-white/[0.02] p-2 text-[10px] leading-4 text-orange-400"></div>
+
+                            <div class="mt-3 flex items-center gap-2">
+                                <button type="button" id="jc-am-change"
+                                    class="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70 transition hover:bg-white/[0.08] hover:text-white">
+                                    Change
+                                </button>
+                                <button type="button" id="jc-am-remove"
+                                    class="flex-1 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-xs text-red-300 transition hover:bg-red-400/10">
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {{-- Add / change form (hidden until "Add Email" or "Change" is pressed) --}}
+                    <div id="jc-mailbox-form" class="hidden space-y-4">
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Email address</span>
+                        <input id="jc-set-email-address" type="email" autocomplete="off" placeholder="you@yourdomain.com"
+                            class="mt-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                    </label>
+
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Mailbox password</span>
+                        <div class="mt-2 flex gap-2">
+                            <input id="jc-set-email-password" type="password" autocomplete="new-password" placeholder="••••••••"
+                                class="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            <button type="button" id="jc-toggle-email-pw"
+                                class="rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-white/50 hover:text-white">Show</button>
+                        </div>
+                        <span id="jc-email-pw-status" class="mt-2 block text-[10px] text-white/30">No password saved.</span>
+                    </label>
+
+                    <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Incoming (IMAP)</div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="col-span-2 block">
+                                <span class="text-[9px] uppercase text-white/40">Host</span>
+                                <input id="jc-set-imap-host" type="text" placeholder="imap.secureserver.net"
+                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            </label>
+                            <label class="block">
+                                <span class="text-[9px] uppercase text-white/40">Port</span>
+                                <input id="jc-set-imap-port" type="number" min="1" max="65535" placeholder="993"
+                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            </label>
+                        </div>
+                        <label class="block">
+                            <span class="text-[9px] uppercase text-white/40">Encryption</span>
+                            <select id="jc-set-imap-encryption" class="jc-new-imap-encryption mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none focus:border-white/25">
+                                <option value="ssl">SSL/TLS</option>
+                                <option value="tls">STARTTLS</option>
+                                <option value="none">None</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Outgoing (SMTP)</div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="col-span-2 block">
+                                <span class="text-[9px] uppercase text-white/40">Host</span>
+                                <input id="jc-set-smtp-host" type="text" placeholder="smtpout.secureserver.net"
+                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            </label>
+                            <label class="block">
+                                <span class="text-[9px] uppercase text-white/40">Port</span>
+                                <input id="jc-set-smtp-port" type="number" min="1" max="65535" placeholder="465"
+                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                            </label>
+                        </div>
+                        <label class="block">
+                            <span class="text-[9px] uppercase text-white/40">Encryption</span>
+                            <select id="jc-set-smtp-encryption" class="jc-new-smtp-encryption mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none focus:border-white/25">
+                                <option value="ssl">SSL/TLS</option>
+                                <option value="tls">STARTTLS</option>
+                                <option value="none">None</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <p class="text-[11px] leading-5 text-white/30">
+                        The password is sent to your server and stored encrypted. It is never shown again.
+                        Leave it blank to keep the current one. Press <span class="text-white/50">Save settings</span> below to apply.
+                    </p>
+
+                    <button type="button" id="jc-am-cancel"
+                        class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-white/60 transition hover:bg-white/[0.08] hover:text-white">
+                        Cancel
+                    </button>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center justify-between border-t border-white/10 px-5 py-4">
+                <span id="jc-settings-status" class="text-[11px] text-white/40"></span>
+                <button type="button" id="jc-settings-save"
+                    class="rounded-xl bg-emerald-400/90 px-5 py-2 text-xs font-medium text-black transition hover:bg-emerald-400">Save settings</button>
+            </div>
+        </aside>
+
+        {{-- MAIN AREA --}}
+        <main class="relative flex min-w-0 flex-1 flex-col">
+
+            {{-- Top Bar --}}
+            <header class="jc-glass flex h-16 items-center justify-between gap-3 border-b border-white/10 px-4 sm:px-8">
+
+                <div class="flex items-center gap-4">
+                    <button
+                        type="button"
+                        id="jc-inbox-btn"
+                        aria-label="Open inbox"
+                        title="Inbox"
+                        class="flex h-8 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-[10px] uppercase tracking-wider text-white/50 transition hover:bg-white/10 hover:text-white"
+                    >
+                        Inbox
+                    </button>
+
+                    <div class="hidden text-xs uppercase tracking-[0.25em] text-white/45 md:block">
+                        Personal assistant
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 sm:gap-4">
+
+                    {{-- Active mailbox chip (click to open Settings > Email) --}}
+                    <button
+                        type="button"
+                        id="jc-mailbox-chip"
+                        title="Active mailbox. Click to change."
+                        class="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 transition hover:bg-white/[0.08]"
+                    >
+                        <span id="jc-mailbox-dot" class="h-1.5 w-1.5 rounded-full" style="background:#6b7280"></span>
+                        <span id="jc-mailbox-chip-text" class="max-w-[120px] truncate text-[10px] text-white/50 sm:max-w-[200px]">Mailbox...</span>
+                        <span id="jc-mailbox-chip-badge" class="hidden rounded-full bg-white/5 px-1.5 py-0.5 text-[8px] uppercase tracking-wider text-white/40"></span>
+                    </button>
+
+                    {{-- AI Credit Balance --}}
+                    <div
+                        id="jc-credit-display"
+                        class="flex items-center gap-2 rounded-full border border-cyan-400/10 bg-cyan-400/[0.03] px-3 py-1.5"
+                        title="Remaining AI credit balance"
+                    >
+                        <span class="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+
+                        <span class="hidden text-[10px] uppercase tracking-wider text-white/30 sm:inline">
+                            Balance
+                        </span>
+
+                        <span
+                            id="jc-credit-value"
+                            class="min-w-[50px] text-right text-xs font-semibold text-cyan-300"
+                        >
+                            —
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        id="jc-settings-btn"
+                        aria-label="Open settings"
+                        title="Settings"
+                        class="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/10 hover:text-white"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </button>
+                    <div class="hidden rounded-full border border-cyan-300/10 bg-cyan-300/[0.04] px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-cyan-100/45 lg:block">
+                        Voice + chat
+                    </div>
+
+                </div>
+
+            </header>
+
+
+            {{-- Center --}}
+            <section class="flex flex-1 flex-col items-center justify-end overflow-y-auto px-4 pb-6 pt-4 sm:px-8">
+
+                <div class="flex w-full max-w-3xl flex-col">
+
+                    {{-- Identity + Human-form hologram --}}
+                    <div id="jarvis-presence" class="ai-idle mb-6 text-center">
+
+                        <h1
+                            class="jc-shimmer-text text-3xl font-light tracking-[0.2em] sm:text-4xl"
+                            data-ai-name
+                        >
+                            JC
+                        </h1>
+
+                        
+
+                        <p class="mt-2 text-xs tracking-wide text-white/45 sm:text-sm">
+                            A thoughtful partner for your day.
+                        </p>
+
+                        <div class="jc-wave mx-auto" aria-hidden="true">
+                            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                        </div>
+
+                        <p
+                            id="jarvis-state-label"
+                            class="mx-auto mt-2 text-[11px] uppercase tracking-[0.2em] text-white/30"
+                            role="status"
+                            aria-live="polite"
+                        ></p>
+                    </div>
+
+
+                    {{-- Command Input --}}
+                    <div
+                        id="jarvis-command"
+                        class="jc-glass-strong rounded-2xl border border-cyan-200/10 p-2 shadow-[0_18px_70px_-28px_rgba(39,184,224,0.4)] sm:p-3"
+                    >
+
+                        <div class="flex items-center gap-3">
+
+                            <input
+                                id="jarvis-input"
+                                type="text"
+                                placeholder="Message JC..."
+                                autocomplete="off"
+                                class="h-12 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-white/35 sm:h-14 sm:text-base"
+                                aria-label="Message JC"
+                            >
+
+                            <button
+                                type="button"
+                                id="jarvis-wake-toggle"
+                                class="flex h-12 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-medium text-white/60 transition hover:border-emerald-300/25 hover:bg-emerald-300/[0.06] hover:text-emerald-100 sm:h-14 sm:px-4"
+                                title='Enable always-listening for "Hello JC"'
+                                aria-pressed="false"
+                            >
+                                <span id="jarvis-wake-dot" class="h-1.5 w-1.5 rounded-full bg-white/20"></span>
+                                <span id="jarvis-wake-label">Enable Voice</span>
+                            </button>
+
+                            <button
+                                id="jarvis-send"
+                                type="button"
+                                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-200 to-sky-400 text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:scale-[1.03] hover:brightness-110 focus-visible:outline-offset-4 sm:h-14 sm:w-14"
+                                aria-label="Send message"
+                                title="Send message"
+                            >
+                                ➤
+                            </button>
+
+                        </div>
+
+                        <div class="flex items-center justify-between gap-3 px-3 pb-1 pt-2">
+                            <span class="text-[10px] text-white/35">Chat naturally, or ask JC to help.</span>
+                            <span class="hidden text-[9px] uppercase tracking-wider text-white/25 sm:inline">Enter to send</span>
+                        </div>
+
+                    </div>
+
+                    {{-- Console: text reply and/or email view --}}
+                    <div
+                        id="jarvis-result"
+                        class="jc-glass-strong fixed right-4 top-20 z-20 hidden max-h-[calc(100vh_-_6rem)] w-[calc(100vw_-_2rem)] max-w-lg overflow-y-auto rounded-2xl border border-cyan-200/10 bg-slate-950/65 p-5 shadow-2xl sm:p-6"
+                        role="region"
+                        aria-live="assertive"
+                        aria-label="JC Response"
+                    >
+
+                        <div class="mb-3 flex items-center justify-between">
+
+                            <div class="flex items-center gap-2">
+                                <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                                <span id="jarvis-result-label" class="text-[10px] uppercase tracking-[0.25em] text-white/30">
+                                    JC Response
+                                </span>
+                            </div>
+
+                            <button
+                                type="button"
+                                id="jarvis-result-close"
+                                class="hidden text-[10px] uppercase tracking-widest text-white/30 transition hover:text-white/70"
+                                aria-label="Close response"
+                            >
+                                Close
+                            </button>
+
+                        </div>
+
+                        <div
+                            id="jarvis-response"
+                            class="text-sm leading-7 text-white/70"
+                        ></div>
+                        <div id="jarvis-email-results" class="mt-4 hidden space-y-2"></div>
+
+                        {{-- Email detail + reply panel, shown when an email is open --}}
+                        <div id="jarvis-email-view" class="mt-4 hidden">
+
+                            <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <div id="jarvis-email-subject" class="truncate text-sm font-medium text-white"></div>
+                                        <div id="jarvis-email-from" class="mt-1 truncate text-xs text-white/40"></div>
+                                    </div>
+                                    <div id="jarvis-email-date" class="whitespace-nowrap text-[10px] text-white/30"></div>
+                                </div>
+
+                                <div
+                                    id="jarvis-email-body"
+                                    class="mt-3 whitespace-pre-line border-t border-white/5 pt-3 text-xs leading-6 text-white/50"
+                                ></div>
+
+                            </div>
+
+                            <div class="mt-4">
+
+                                <div class="mb-2 flex items-center justify-between">
+                                    <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">
+                                        Your reply
+                                    </span>
+                                    <span id="jarvis-draft-status" class="text-[10px] text-white/30"></span>
+                                </div>
+
+                                <textarea
+                                    id="jarvis-reply-text"
+                                    rows="4"
+                                    placeholder='Type your reply, or say "proceed" and JC will draft one'
+                                    class="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/20"
+                                    aria-label="Email reply"
+                                ></textarea>
+
+                                <div class="mt-3 flex items-center gap-2">
+
+                                    <button
+                                        type="button"
+                                        id="jarvis-draft-btn"
+                                        class="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-white/60 transition hover:bg-white/[0.08] hover:text-white"
+                                    >
+                                        Ask JC to draft
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        id="jarvis-send-reply-btn"
+                                        class="rounded-xl bg-emerald-400/90 px-4 py-2 text-xs font-medium text-black transition hover:bg-emerald-400"
+                                    >
+                                        Send reply
+                                    </button>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="mt-5">
+                        <div class="mb-3 flex items-center justify-between gap-3 px-1">
+                            <span class="text-[10px] font-medium uppercase tracking-[0.2em] text-white/45">Start anywhere</span>
+                            <span class="text-[10px] text-white/30">No special commands needed</span>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <button type="button" data-prompt="How are you?" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Chat</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">How are you?</span>
+                            </button>
+                            <button type="button" data-prompt="Tell me something interesting" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Chat</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Tell me something interesting</span>
+                            </button>
+                            <button type="button" data-prompt="Check my latest email" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-violet-100/45">Email</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Check my latest email</span>
+                            </button>
+                            <button type="button" data-prompt="Find warranty emails" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-violet-100/45">Email</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Find warranty emails</span>
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            {{-- Bottom Status --}}
+            <footer class="jc-glass flex h-12 items-center justify-between border-t border-white/10 px-4 sm:px-8">
+
+                <div class="text-[10px] uppercase tracking-widest text-white/20">
+                    A clear space to think and get things done
+                </div>
+
+                <div class="text-[10px] text-white/20">
+                    MMC AI • Anthropic
+                </div>
+
+            </footer>
+
+        </main>
+
+    </div>
+
+{{-- =====================================================================
+     MAIN APP SCRIPT
+     ===================================================================== --}}
+<script>
+(function () {
+    // =====================================================================
+    // CONFIGURATION & DEBUG UTILITIES
+    // =====================================================================
+
+    const DEBUG_MODE = localStorage.getItem('jc_debug') === 'true';
+
+    // Endpoint that returns recent emails: { success: true, emails: [...] }
+    // (add this route/controller method on the server, see notes)
+    const INBOX_URL = '/jarvis/inbox';
+
+    function debugLog(category, message, data = null) {
+        if (!DEBUG_MODE) return;
+        const timestamp = new Date().toLocaleTimeString();
+        console.log(`[${timestamp}] [${category}] ${message}`, data || '');
+    }
+
+    function showError(message) {
+        const errorEl = document.createElement('div');
+        errorEl.className = 'jc-error-message';
+        errorEl.textContent = message;
+        responseBox.appendChild(errorEl);
+        console.error('JC Error:', message);
+    }
+
+    function getCSRFToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.content
+            || document.querySelector('input[name="_token"]')?.value
+            || '';
+    }
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = String(value ?? '');
+        return div.innerHTML;
+    }
+
+    // Pause CSS animations while the tab is hidden
+    document.addEventListener('visibilitychange', function () {
+        document.documentElement.classList.toggle('jc-tab-hidden', document.hidden);
+    });
+
+    // =====================================================================
+    // DOM ELEMENTS
+    // =====================================================================
+
+    const input             = document.getElementById('jarvis-input');
+    const send              = document.getElementById('jarvis-send');
+    const result            = document.getElementById('jarvis-result');
+    const resultLabel       = document.getElementById('jarvis-result-label');
+    const resultClose       = document.getElementById('jarvis-result-close');
+    const responseBox       = document.getElementById('jarvis-response');
+    const presence          = document.getElementById('jarvis-presence');
+    const stateLabel        = document.getElementById('jarvis-state-label');
+    const wakeToggle        = document.getElementById('jarvis-wake-toggle');
+    const wakeDot           = document.getElementById('jarvis-wake-dot');
+    const wakeLabel         = document.getElementById('jarvis-wake-label');
+
+    const emailView         = document.getElementById('jarvis-email-view');
+    const emailResults      = document.getElementById('jarvis-email-results');
+    const emailSubjectEl    = document.getElementById('jarvis-email-subject');
+    const emailFromEl       = document.getElementById('jarvis-email-from');
+    const emailDateEl       = document.getElementById('jarvis-email-date');
+    const emailBodyEl       = document.getElementById('jarvis-email-body');
+    const replyText         = document.getElementById('jarvis-reply-text');
+    const draftStatus       = document.getElementById('jarvis-draft-status');
+    const draftBtn          = document.getElementById('jarvis-draft-btn');
+    const sendReplyBtn      = document.getElementById('jarvis-send-reply-btn');
+
+    const creditValue       = document.getElementById('jc-credit-value');
+
+    const inboxDrawer       = document.getElementById('jc-inbox-drawer');
+    const inboxBackdrop     = document.getElementById('jc-inbox-backdrop');
+    const inboxList         = document.getElementById('jc-inbox-list');
+
+    // =====================================================================
+    // VOICE CONFIGURATION
+    // =====================================================================
+
+    function buildWakePhrases(name) {
+        const n = name.toLowerCase().trim();
+        return ['hello ' + n, 'hey ' + n, 'ok ' + n, 'okay ' + n];
+    }
+
+    let WAKE_PHRASES = buildWakePhrases(localStorage.getItem('jc_ai_name') || 'JC');
+
+    window.jcSetWakeName = function (name) {
+        WAKE_PHRASES = buildWakePhrases(name);
+        debugLog('VOICE', 'Wake phrases updated', WAKE_PHRASES);
+    };
+
+    const PROCEED_PHRASES = ['proceed', 'go ahead', 'draft it', 'draft a reply'];
+
+    const STOP_PHRASES = [
+        'stop', 'pause', 'cancel', 'stop it', 'pause it', 'cancel it',
+        'never mind', 'nevermind', 'stop working', 'pause working',
+        'cancel that', 'stop that', 'stop this', 'pause this'
+    ];
+
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const speechSupported = !!SpeechRecognitionAPI;
+    const speakingSupported = 'speechSynthesis' in window;
+
+    const MIN_COMMAND_LENGTH = 3;
+    const CONVERSATION_TIMEOUT = 30000;
+
+    // =====================================================================
+    // STATE MANAGEMENT
+    // =====================================================================
+
+    let recognition = null;
+    let wakeModeEnabled = false;
+    let listeningForCommand = false;
+    let conversationMode = false;
+    let conversationTimer = null;
+    let restartTimer = null;
+    let isJCSpeaking = false;
+    let jarvisWorking = false;
+    let jarvisPaused = false;
+    let activeCommandController = null;
+    let currentEmail = null;
+    let draftPending = false;
+    let knownUnreadEmailUids = new Set();
+    let unreadEmailInitialized = false;
+    let emailCheckInFlight = false;
+
+    let conversationId = localStorage.getItem('jc_conversation_id');
+
+    // =====================================================================
+    // CREDIT MANAGEMENT
+    // =====================================================================
+
+    function updateCreditDisplay(balance) {
+        if (!creditValue) return;
+
+        const numericBalance = Number(balance);
+
+        if (!Number.isFinite(numericBalance)) {
+            console.warn('Invalid credit balance:', balance);
+            return;
+        }
+
+        const formatted = numericBalance.toLocaleString('en-PH', {
+            style: 'currency',
+            currency: 'PHP',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+
+        creditValue.textContent = formatted;
+
+        localStorage.setItem(
+            'jc_credit_php',
+            String(numericBalance)
+        );
+    }
+    async function loadCreditBalance() {
+        if (!creditValue) return;
+
+        try {
+            const response = await fetch('/jarvis/credits', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                cache: 'no-store',
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (
+                data.success &&
+                data.credit &&
+                data.credit.jarvis_php_balance !== undefined
+            ) {
+                updateCreditDisplay(
+                    data.credit.jarvis_php_balance
+                );
+
+                window.jcCredit = data.credit;
+
+                console.log('JARVIS credit balance:', {
+                    actualUsd: data.credit.actual_usd_balance,
+                    multiplier: data.credit.multiplier,
+                    jarvisUsd: data.credit.jarvis_usd_balance,
+                    forex: data.credit.usd_php_rate,
+                    jarvisPhp: data.credit.jarvis_php_balance,
+                });
+            }
+
+        } catch (error) {
+            console.error(
+                'Failed to load JARVIS credit balance:',
+                error
+            );
+        }
+    }
+    // Restore saved credit
+    const savedCredit = localStorage.getItem('jc_credit');
+
+    if (savedCredit !== null) {
+        updateCreditDisplay(savedCredit);
+    } else {
+        // Don't show a false 0 before the server responds.
+        if (creditValue) {
+            creditValue.textContent = '—';
+        }
+    }
+
+    // =====================================================================
+    // AI STATE & PRESENCE
+    // =====================================================================
+
+    function setAiState(state) {
+        window.jcAiStateName = state; // lets the lazily-loaded avatar pick up the current state
+
+        if (presence) {
+            presence.classList.remove('ai-idle', 'ai-armed', 'ai-listening', 'ai-thinking', 'ai-speaking');
+            presence.classList.add('ai-' + state);
+        }
+
+        if (window.jcAvatar && typeof window.jcAvatar.setState === 'function') {
+            window.jcAvatar.setState(state);
+        }
+
+        debugLog('STATE', 'AI state changed', state);
+    }
+
+    function setLabel(text) {
+        if (stateLabel) {
+            stateLabel.textContent = text;
+        }
+    }
+
+    function getAiName() {
+        return (window.jcAiName || localStorage.getItem('jc_ai_name') || 'JC').trim() || 'JC';
+    }
+
+    function getIdleLabel() {
+        return `Say "Hello ${getAiName()}" to wake me, or type below`;
+    }
+
+    function getWakePhraseLabel() {
+        return `Say "${WAKE_PHRASES[0]}" to activate`;
+    }
+
+    if (stateLabel) {
+        stateLabel.textContent = getIdleLabel();
+    }
+
+    // =====================================================================
+    // EMAIL CONSOLE
+    // =====================================================================
+
+    function openEmailConsole(email, jcNote = null) {
+        if (!email) return;
+
+        const uid = email.uid ?? email.email_uid ?? email.id ?? null;
+        if (!uid) {
+            console.error('Email has no UID:', email);
+            showError('Email missing required UID field');
+            return;
+        }
+
+        email.uid = uid;
+        currentEmail = email;
+        draftPending = false;
+
+        emailResults.classList.add('hidden');
+        emailResults.innerHTML = '';
+
+        result.classList.remove('hidden');
+        resultLabel.textContent = 'Email';
+        resultClose.classList.remove('hidden');
+
+        responseBox.textContent = jcNote || 'Here is that email. You can type a reply below, or say "proceed" and I\'ll draft one for you.';
+        responseBox.classList.remove('hidden');
+
+        emailSubjectEl.textContent = email.subject || '(No subject)';
+        emailFromEl.textContent = email.from_name || email.from || 'Unknown sender';
+
+        emailDateEl.textContent = email.date
+            ? new Date(email.date).toLocaleString(undefined, {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: 'numeric', minute: '2-digit'
+              })
+            : '';
+
+        emailBodyEl.textContent = email.body || '(No content)';
+
+        replyText.value = '';
+        draftStatus.textContent = '';
+
+        emailView.classList.remove('hidden');
+        emailView.classList.add('jc-fade-in');
+
+        setTimeout(() => emailView.classList.remove('jc-fade-in'), 500);
+
+        debugLog('EMAIL', 'Email console opened', { uid, subject: email.subject });
+    }
+
+    function closeEmailConsole() {
+        currentEmail = null;
+        draftPending = false;
+        emailView.classList.add('hidden');
+        resultClose.classList.add('hidden');
+        result.classList.add('hidden');
+    }
+
+    resultClose.addEventListener('click', closeEmailConsole);
+
+    // =====================================================================
+    // EMAIL RESULTS (inline list in the console)
+    // =====================================================================
+
+    function formatShortDate(value) {
+        return value
+            ? new Date(value).toLocaleString(undefined, {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: 'numeric', minute: '2-digit'
+              })
+            : '';
+    }
+
+    function showEmailResults(emails) {
+        emailResults.innerHTML = '';
+        emailResults.classList.remove('hidden');
+
+        if (!Array.isArray(emails) || emails.length === 0) {
+            emailResults.innerHTML = '<div class="px-4 py-3 text-sm text-white/50">No matching emails found.</div>';
+            return;
+        }
+
+        const frag = document.createDocumentFragment();
+
+        emails.forEach(function (email) {
+            const uid = email.uid ?? email.email_uid ?? email.id ?? '';
+            if (!uid) {
+                console.warn('Email has no UID:', email);
+                return;
+            }
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-white/20';
+            button.dataset.uid = uid;
+
+            button.innerHTML = `
+                <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0 flex-1">
+                        <div class="truncate text-sm font-medium text-white">${escapeHtml(email.subject || '(No subject)')}</div>
+                        <div class="mt-1 truncate text-xs text-white/60">${escapeHtml(email.from_name || email.from || 'Unknown sender')}</div>
+                    </div>
+                    <div class="shrink-0 text-[11px] text-white/40">${escapeHtml(formatShortDate(email.date))}</div>
+                </div>
+            `;
+
+            button.addEventListener('click', () => selectEmail(button));
+            frag.appendChild(button);
+        });
+
+        emailResults.appendChild(frag);
+    }
+
+    // =====================================================================
+    // INBOX DRAWER (lazy loaded, so page render never waits on IMAP)
+    // =====================================================================
+
+    let inboxLoaded = false;
+    let inboxLoading = false;
+
+    function categoryFor(subject) {
+        const s = String(subject || '').toLowerCase();
+        if (s.includes('warranty')) return 'Warranty';
+        if (s.includes('invoice')) return 'Finance';
+        if (s.includes('laptop')) return 'IT Support';
+        return 'General';
+    }
+
+    function renderInbox(emails) {
+        const list = Array.isArray(emails) ? emails : [];
+
+        const setText = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = String(value);
+        };
+
+        setText('jc-count-total', list.length);
+        setText('jc-count-urgent', list.filter(e => String(e.priority || '').toLowerCase() === 'urgent').length);
+        setText('jc-count-high', list.filter(e => String(e.priority || '').toLowerCase() === 'high').length);
+
+        if (list.length === 0) {
+            inboxList.innerHTML = '<div class="px-5 py-8 text-center text-xs text-white/30">No emails found.</div>';
+            return;
+        }
+
+        const frag = document.createDocumentFragment();
+
+        list.forEach(function (email) {
+            const uid = email.uid ?? email.email_uid ?? email.id ?? '';
+            if (!uid) return;
+
+            const seen = Boolean(email.seen);
+            const subject = email.subject || '(No Subject)';
+            const from = email.from_name || email.from || '';
+            const dateLabel = email.date
+                ? new Date(email.date).toLocaleDateString(undefined, { month: 'short', day: '2-digit' })
+                : '';
+
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'jc-email-row w-full border-b border-white/5 px-5 py-4 text-left transition hover:bg-white/[0.07]';
+            row.dataset.uid = uid;
+
+            row.innerHTML = `
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="truncate text-sm font-medium ${seen ? 'text-white/70' : 'text-white'}">${escapeHtml(subject)}</div>
+                        <div class="mt-1 truncate text-xs text-white/40">${escapeHtml(from)}</div>
+                    </div>
+                    <div class="whitespace-nowrap text-[10px] text-white/30">${escapeHtml(dateLabel)}</div>
+                </div>
+                <div class="mt-3 flex items-center gap-2">
+                    <span class="rounded-full bg-white/5 px-2 py-1 text-[9px] uppercase tracking-wider text-white/40">${categoryFor(subject)}</span>
+                    ${seen ? '' : `
+                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                        <span class="text-[9px] uppercase tracking-wider text-emerald-400">New</span>`}
+                </div>
+            `;
+
+            row.addEventListener('click', function () {
+                closeInbox();
+                selectEmail(row);
+            });
+
+            frag.appendChild(row);
+        });
+
+        inboxList.innerHTML = '';
+        inboxList.appendChild(frag);
+    }
+
+    async function loadInbox(force = false) {
+        if (inboxLoading || (inboxLoaded && !force)) return;
+
+        inboxLoading = true;
+        inboxList.innerHTML = `
+            <div class="flex items-center justify-center gap-2 px-5 py-8 text-xs text-white/40">
+                <span class="inline-block h-2 w-2 animate-pulse rounded-full bg-white/40"></span>
+                Loading emails...
+            </div>`;
+
+        try {
+            const response = await fetch(INBOX_URL, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-store',
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || data.message || 'Could not load emails.');
+            }
+
+            renderInbox(data.emails);
+            inboxLoaded = true;
+
+        } catch (error) {
+            console.error('Inbox load failed:', error);
+            inboxList.innerHTML = `<div class="px-5 py-8 text-center text-xs text-red-300">${escapeHtml(describeFetchError(error))}</div>`;
+        } finally {
+            inboxLoading = false;
+        }
+    }
+
+    function openInbox() {
+        inboxDrawer.classList.remove('-translate-x-full');
+        inboxDrawer.setAttribute('aria-hidden', 'false');
+        inboxBackdrop.classList.remove('hidden');
+        loadInbox();
+    }
+
+    function closeInbox() {
+        inboxDrawer.classList.add('-translate-x-full');
+        inboxDrawer.setAttribute('aria-hidden', 'true');
+        inboxBackdrop.classList.add('hidden');
+    }
+
+    window.jcOpenInbox = openInbox;
+    window.jcCloseInbox = closeInbox;
+
+    document.getElementById('jc-inbox-btn')?.addEventListener('click', openInbox);
+    document.getElementById('jc-inbox-close')?.addEventListener('click', closeInbox);
+    document.getElementById('jc-inbox-refresh')?.addEventListener('click', () => loadInbox(true));
+    inboxBackdrop?.addEventListener('click', closeInbox);
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeInbox();
+    });
+
+    // =====================================================================
+    // SPEECH & VOICE
+    // =====================================================================
+
+    function speak(text) {
+        if (!speakingSupported || !text) return;
+
+        isJCSpeaking = true;
+        clearTimeout(restartTimer);
+
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                // Already stopped
+            }
+        }
+
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        utterance.pitch = 1;
+
+        utterance.onstart = function () {
+            setAiState('speaking');
+            setLabel(`${getAiName()} is speaking...`);
+        };
+
+        utterance.onboundary = function (event) {
+            if (window.jcAvatar && typeof window.jcAvatar.pulse === 'function') {
+                window.jcAvatar.pulse(event, text);
+            }
+        };
+
+        utterance.onend = function () {
+            isJCSpeaking = false;
+            afterSpeakingOrIdle();
+        };
+
+        utterance.onerror = function (event) {
+            isJCSpeaking = false;
+            console.error('Speech error:', event.error);
+            afterSpeakingOrIdle();
+        };
+
+        window.speechSynthesis.speak(utterance);
+    }
+
+    // =====================================================================
+    // STOP / PAUSE COMMAND
+    // =====================================================================
+
+    function isStopCommand(command) {
+        const normalized = command
+            .trim()
+            .toLowerCase()
+            .replace(/[.!?,]/g, '')
+            .replace(/\s+/g, ' ');
+
+        return STOP_PHRASES.includes(normalized);
+    }
+
+    function stopJarvisWork() {
+        if (!jarvisWorking) return false;
+
+        debugLog('COMMAND', 'Stopping current work');
+
+        jarvisPaused = true;
+        jarvisWorking = false;
+
+        if (activeCommandController) {
+            try {
+                activeCommandController.abort();
+            } catch (e) {
+                console.warn('Could not abort command:', e);
+            }
+            activeCommandController = null;
+        }
+
+        if (speakingSupported) {
+            window.speechSynthesis.cancel();
+        }
+
+        isJCSpeaking = false;
+
+        responseBox.textContent = 'Okay, I stopped working on that.';
+        responseBox.classList.remove('hidden');
+
+        input.disabled = false;
+        send.disabled = false;
+
+        setAiState(wakeModeEnabled ? 'listening' : 'idle');
+        setLabel(wakeModeEnabled ? "I'm listening..." : getIdleLabel());
+
+        speak('Okay, I stopped.');
+
+        return true;
+    }
+
+    // =====================================================================
+    // STATE RECOVERY
+    // =====================================================================
+
+    function afterSpeakingOrIdle() {
+        if (jarvisWorking) {
+            setAiState('thinking');
+            setLabel(`${getAiName()} is responding... Say "stop" or "pause" to interrupt.`);
+            resumeRecognitionIfNeeded();
+            return;
+        }
+
+        if (!wakeModeEnabled) {
+            setAiState('idle');
+            setLabel(getIdleLabel());
+            return;
+        }
+
+        if (conversationMode) {
+            setAiState('listening');
+            setLabel("I'm listening...");
+            refreshConversationTimer();
+            resumeRecognitionIfNeeded();
+            return;
+        }
+
+        setAiState('armed');
+        setLabel(getWakePhraseLabel());
+        resumeRecognitionIfNeeded();
+    }
+
+    // =====================================================================
+    // CONVERSATION MODE
+    // =====================================================================
+
+    function startConversationMode() {
+        conversationMode = true;
+        listeningForCommand = true;
+        refreshConversationTimer();
+    }
+
+    function refreshConversationTimer() {
+        if (!conversationMode) return;
+
+        clearTimeout(conversationTimer);
+
+        conversationTimer = setTimeout(function () {
+            conversationMode = false;
+            listeningForCommand = false;
+
+            if (wakeModeEnabled && !jarvisWorking) {
+                setAiState('armed');
+                setLabel(getWakePhraseLabel());
+            }
+        }, CONVERSATION_TIMEOUT);
+    }
+
+    // =====================================================================
+    // MAIN COMMAND HANDLER
+    // =====================================================================
+
+    async function talkToJarvis(spokenCommand) {
+        const command = ((spokenCommand !== undefined ? spokenCommand : input.value).trim());
+
+        if (!command) return;
+
+        // Handle working state
+        if (jarvisWorking) {
+            if (isStopCommand(command)) {
+                stopJarvisWork();
+                input.value = '';
+                return;
+            }
+            debugLog('COMMAND', 'JC is busy. Ignoring:', command);
+            return;
+        }
+
+        const normalized = command.toLowerCase();
+
+        // Draft reply shortcut
+        if (currentEmail && !draftPending && PROCEED_PHRASES.some(phrase => normalized.includes(phrase))) {
+            input.value = '';
+            await draftReply();
+            return;
+        }
+
+        // Start working
+        jarvisWorking = true;
+        jarvisPaused = false;
+
+        input.disabled = true;
+        send.disabled = true;
+
+        activeCommandController = new AbortController();
+
+        setAiState('thinking');
+        setLabel(`${getAiName()} is thinking...`);
+
+        result.classList.remove('hidden');
+        resultLabel.textContent = `${getAiName()} Response`;
+        responseBox.classList.remove('hidden');
+        responseBox.textContent = 'Thinking...';
+
+        try {
+            const response = await fetch('/jarvis/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': getCSRFToken(),
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    command: command,
+                    conversation_id: conversationId,
+                    email_uid: currentEmail ? currentEmail.uid : null,
+                }),
+                signal: activeCommandController.signal,
+            });
+
+            if (jarvisPaused) return;
+
+            const data = await response.json();
+
+            if (jarvisPaused) return;
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || `${getAiName()} could not process the command.`);
+            }
+
+            // Save conversation ID
+            if (data.conversation_id) {
+                conversationId = data.conversation_id;
+                localStorage.setItem('jc_conversation_id', conversationId);
+            }
+
+            // Update remaining credit balance
+            if (
+                data.credit &&
+                data.credit.balance !== undefined
+            ) {
+                updateCreditDisplay(data.credit.balance);
+
+                window.jcCredit = data.credit;
+
+                debugLog('CREDIT', 'Credit balance updated', {
+                    limit: data.credit.limit,
+                    used: data.credit.used,
+                    balance: data.credit.balance,
+                });
+            }
+
+            // Handle email results
+            let finalResponse = data.response || 'Done.';
+
+            if (Array.isArray(data.emails)) {
+                showEmailResults(data.emails);
+
+                if (data.emails.length > 0) {
+                    const genericResponse = !data.response || /working|searching|finding|processing/i.test(data.response);
+                    if (genericResponse) {
+                        finalResponse = `Done. I found ${data.emails.length} matching email${data.emails.length === 1 ? '' : 's'}.`;
+                    }
+                } else {
+                    finalResponse = 'I finished searching, but I could not find any matching emails.';
+                }
+            } else {
+                emailResults.classList.add('hidden');
+                emailResults.innerHTML = '';
+            }
+
+            // Handle specific email
+            if (data.email) {
+                openEmailConsole(data.email, finalResponse);
+            }
+
+            // Display response
+            responseBox.textContent = finalResponse;
+
+            // Announce completion
+            speak(finalResponse);
+
+            debugLog('COMMAND', 'Command completed', { command, response: finalResponse });
+
+        } catch (error) {
+            if (error.name === 'AbortError' || jarvisPaused) {
+                debugLog('COMMAND', 'Command stopped by user');
+                return;
+            }
+
+            console.error('JC command error:', error);
+
+            const friendly = describeFetchError(error);
+            responseBox.textContent = friendly;
+            responseBox.classList.remove('hidden');
+
+            speak("Sorry, I ran into a problem. " + friendly);
+
+        } finally {
+            activeCommandController = null;
+            jarvisWorking = false;
+            jarvisPaused = false;
+
+            input.disabled = false;
+            send.disabled = false;
+            input.value = '';
+
+            if (!isJCSpeaking) {
+                afterSpeakingOrIdle();
+            }
+
+            input.focus();
+        }
+    }
+
+    // =====================================================================
+    // EMAIL SELECTION
+    // =====================================================================
+
+    async function selectEmail(button, timeoutMs = 15000) {
+        const uid = button.dataset.uid;
+
+        if (!uid) {
+            console.error('Missing email UID');
+            return;
+        }
+
+        if (jarvisWorking) return;
+
+        button.disabled = true;
+        const originalHTML = button.innerHTML;
+
+        button.innerHTML = `<div class="flex items-center gap-2 text-sm text-white/60">
+            <span class="inline-block h-2 w-2 animate-pulse rounded-full bg-white/60"></span>
+            Opening email...
+        </div>`;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            setAiState('thinking');
+            setLabel('Opening email...');
+
+            const response = await fetch(`/jarvis/email/${encodeURIComponent(uid)}`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal,
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Unable to open this email.');
+            }
+
+            const email = data.email;
+            if (!email) {
+                throw new Error('Email data was not returned.');
+            }
+
+            email.uid = email.uid || uid;
+            currentEmail = email;
+            draftPending = false;
+
+            openEmailConsole(email, `Here is the email from ${email.from_name || email.from || 'Unknown sender'}.`);
+
+            setAiState(wakeModeEnabled ? 'listening' : 'idle');
+            setLabel('Email opened');
+
+            speak(`I opened the email from ${email.from_name || email.from || 'Unknown sender'}.`);
+
+        } catch (error) {
+            const message = error.name === 'AbortError' ? 'Email loading timed out.' : error.message;
+            console.error('Unable to open email:', error);
+
+            responseBox.textContent = message;
+            responseBox.classList.remove('hidden');
+            result.classList.remove('hidden');
+
+            setAiState('idle');
+            setLabel('Unable to open email');
+
+            speak('Sorry, I could not open that email.');
+
+        } finally {
+            clearTimeout(timer);
+            // Always restore the button (previously it stayed stuck on "Opening email...")
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }
+    }
+
+    window.selectEmail = selectEmail;
+
+    // =====================================================================
+    // DRAFT & SEND REPLY
+    // =====================================================================
+
+    async function draftReply() {
+        if (!currentEmail) return;
+
+        draftPending = true;
+        draftBtn.disabled = true;
+
+        setAiState('thinking');
+        setLabel(`${getAiName()} is drafting a reply...`);
+        draftStatus.textContent = 'Drafting...';
+
+        try {
+            const response = await fetch(`/jarvis/email/${encodeURIComponent(currentEmail.uid)}/draft-reply`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': getCSRFToken(),
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({ conversation_id: conversationId }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || `${getAiName()} could not draft a reply.`);
+            }
+
+            replyText.value = data.draft || '';
+            draftStatus.textContent = 'Draft ready — review, edit if needed, then send.';
+
+            const spoken = 'I\'ve drafted a reply. Take a look, and send it whenever you\'re ready.';
+            responseBox.textContent = spoken;
+            speak(spoken);
+
+        } catch (error) {
+            draftStatus.textContent = '';
+            responseBox.textContent = error.message;
+            speak("Sorry, I couldn't draft that. " + error.message);
+
+        } finally {
+            draftBtn.disabled = false;
+            draftPending = false;
+            afterSpeakingOrIdle();
+        }
+    }
+
+    draftBtn.addEventListener('click', draftReply);
+
+    async function sendReply() {
+        if (!currentEmail) return;
+
+        const body = replyText.value.trim();
+
+        if (!body) {
+            draftStatus.textContent = `Write a reply first, or ask ${getAiName()} to draft one.`;
+            return;
+        }
+
+        sendReplyBtn.disabled = true;
+        draftStatus.textContent = 'Sending...';
+
+        setAiState('thinking');
+        setLabel(`${getAiName()} is sending your reply...`);
+
+        try {
+            const response = await fetch(`/jarvis/email/${encodeURIComponent(currentEmail.uid)}/send-reply`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': getCSRFToken(),
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({ body: body }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || `${getAiName()} could not send that reply.`);
+            }
+
+            draftStatus.textContent = 'Reply sent.';
+            const spoken = 'Your reply has been sent.';
+            responseBox.textContent = spoken;
+            speak(spoken);
+
+        } catch (error) {
+            draftStatus.textContent = '';
+            responseBox.textContent = error.message;
+            speak("Sorry, I couldn't send that. " + error.message);
+
+        } finally {
+            sendReplyBtn.disabled = false;
+            afterSpeakingOrIdle();
+        }
+    }
+
+    sendReplyBtn.addEventListener('click', sendReply);
+
+    // =====================================================================
+    // AUTOMATIC EMAIL MONITOR
+    // =====================================================================
+
+    async function checkUnreadEmails() {
+        if (jarvisWorking) return;
+
+        try {
+            const response = await fetch('/jarvis/notification', {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-store',
+            });
+
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            if (!data.success || !Array.isArray(data.emails)) return;
+
+            const unreadEmails = data.emails;
+
+            // Initialize known emails on first check
+            if (!unreadEmailInitialized) {
+                unreadEmails.forEach(email => {
+                    if (email.uid) {
+                        knownUnreadEmailUids.add(String(email.uid));
+                    }
+                });
+                unreadEmailInitialized = true;
+                debugLog('EMAIL', `Monitor initialized with ${unreadEmails.length} existing unread email(s)`);
+                return;
+            }
+
+            // Find new unread emails
+            const newEmails = unreadEmails.filter(email =>
+                email.uid && !knownUnreadEmailUids.has(String(email.uid))
+            );
+
+            // Update known emails
+            unreadEmails.forEach(email => {
+                if (email.uid) {
+                    knownUnreadEmailUids.add(String(email.uid));
+                }
+            });
+
+            if (newEmails.length === 0) return;
+
+            debugLog('EMAIL', `New unread emails detected: ${newEmails.length}`);
+
+            // Inbox drawer is now stale
+            inboxLoaded = false;
+
+            const newest = newEmails[0];
+            const sender = newest.from_name || newest.from || 'someone';
+            const subject = newest.subject || '(No subject)';
+            const count = newEmails.length;
+
+            const message = count === 1
+                ? `You have a new unread email from ${sender}, regarding ${subject}.`
+                : `You have ${count} new unread emails. The latest is from ${sender}, regarding ${subject}.`;
+
+            // Display notification
+            result.classList.remove('hidden');
+            resultLabel.textContent = 'New Email';
+            responseBox.textContent = message;
+            responseBox.classList.remove('hidden');
+
+            emailView.classList.add('hidden');
+            resultClose.classList.add('hidden');
+
+            showEmailResults(newEmails);
+
+            setAiState('speaking');
+            setLabel('New unread email');
+            speak(message);
+
+        } catch (error) {
+            // Rethrow so the scheduler can back off (network errors show up here as "Failed to fetch")
+            debugLog('EMAIL', 'Monitor error', error.message);
+            throw error;
+        }
+    }
+
+    // Turn low-level fetch errors into something readable
+    function describeFetchError(error) {
+        if (error && error.name === 'AbortError') return 'The request timed out.';
+        if (error instanceof TypeError) {
+            return 'Cannot reach the server (network error). Check that the Laravel server is running and that you opened the page from the same address it is served on.';
+        }
+        return (error && error.message) || 'Unknown error';
+    }
+    window.jcDescribeFetchError = describeFetchError;
+
+    // Self-scheduling monitor: never overlaps itself, skips hidden tabs,
+    // and backs off (30s -> 60s -> 120s -> 5min) while the server is unreachable.
+    const MONITOR_BASE_MS = 30000;
+    const MONITOR_MAX_MS = 300000;
+    let monitorFailures = 0;
+
+    async function guardedEmailCheck() {
+        if (!emailCheckInFlight && !document.hidden) {
+            emailCheckInFlight = true;
+            try {
+                await checkUnreadEmails();
+                monitorFailures = 0;
+            } catch (error) {
+                monitorFailures++;
+                if (monitorFailures === 1 || monitorFailures % 5 === 0) {
+                    console.warn('JC email monitor:', describeFetchError(error), `(failure #${monitorFailures})`);
+                }
+            } finally {
+                emailCheckInFlight = false;
+            }
+        }
+
+        const delay = Math.min(MONITOR_BASE_MS * Math.pow(2, monitorFailures), MONITOR_MAX_MS);
+        setTimeout(guardedEmailCheck, delay);
+    }
+
+    // =====================================================================
+    // INPUT HANDLERS
+    // =====================================================================
+
+    send.addEventListener('click', () => talkToJarvis());
+
+    input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            talkToJarvis();
+        }
+    });
+
+    document.querySelectorAll('.jarvis-suggestion').forEach(button => {
+        button.addEventListener('click', function () {
+            if (jarvisWorking) return;
+            input.value = button.dataset.prompt || button.textContent.trim();
+            talkToJarvis();
+        });
+    });
+
+    // =====================================================================
+    // WAKE PHRASE DETECTION
+    // =====================================================================
+
+    function stripWakePhrase(transcript) {
+        const lower = transcript.toLowerCase().trim();
+
+        for (const phrase of WAKE_PHRASES) {
+            const idx = lower.indexOf(phrase);
+            if (idx !== -1) {
+                const after = transcript.slice(idx + phrase.length).trim();
+                return {
+                    heard: true,
+                    remainder: after.replace(/^[,.\s]+/, '')
+                };
+            }
+        }
+
+        return { heard: false, remainder: '' };
+    }
+
+    function isLikelyValidCommand(text) {
+        const cleaned = text.trim().replace(/[.,!?]+$/g, '').toLowerCase();
+
+        if (cleaned.length < MIN_COMMAND_LENGTH) return false;
+
+        const noiseWords = ['uh', 'um', 'hmm', 'hm', 'ah', 'oh', 'mm', 'mmm', 'ahem', 'cough'];
+
+        if (noiseWords.includes(cleaned)) return false;
+
+        // Filter out repetitive noise
+        const words = cleaned.split(/\s+/);
+        if (words.length >= 3 && words[0] === words[1] && words[1] === words[2]) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // =====================================================================
+    // SPEECH RECOGNITION
+    // =====================================================================
+
+    function initRecognition() {
+        if (!speechSupported) return null;
+
+        const rec = new SpeechRecognitionAPI();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = 'en-US';
+
+        rec.onresult = function (event) {
+            let finalTranscript = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const chunk = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += chunk;
+                }
+            }
+
+            if (!finalTranscript) return;
+
+            const transcript = finalTranscript.trim();
+
+            // JC is working - only accept stop commands
+            if (jarvisWorking) {
+                if (isStopCommand(transcript)) {
+                    stopJarvisWork();
+                    return;
+                }
+                debugLog('VOICE', 'JC busy, ignoring:', transcript);
+                return;
+            }
+
+            // Conversation mode
+            if (conversationMode) {
+                clearTimeout(conversationTimer);
+
+                if (!isLikelyValidCommand(transcript)) return;
+
+                input.value = transcript;
+                listeningForCommand = true;
+                talkToJarvis(transcript);
+                return;
+            }
+
+            // Wake mode - listen for wake phrase
+            const { heard, remainder } = stripWakePhrase(transcript);
+
+            if (!heard) return;
+
+            // Wake phrase + command
+            if (remainder) {
+                if (!isLikelyValidCommand(remainder)) return;
+
+                startConversationMode();
+                input.value = remainder;
+                setAiState('thinking');
+                setLabel(`${getAiName()} is thinking...`);
+                talkToJarvis(remainder);
+                return;
+            }
+
+            // Just wake phrase
+            startConversationMode();
+            setAiState('listening');
+            setLabel("I'm listening...");
+        };
+
+        rec.onerror = function (event) {
+            console.warn('Speech recognition error:', event.error);
+
+            switch (event.error) {
+                case 'no-speech':
+                    setLabel('No speech detected. Please try again.');
+                    break;
+                case 'audio-capture':
+                    setLabel('Microphone not accessible.');
+                    break;
+                case 'network':
+                    setLabel('Network error. Check your connection.');
+                    break;
+                default:
+                    setLabel(`Speech error: ${event.error}`);
+            }
+        };
+
+        rec.onend = function () {
+            if (!wakeModeEnabled || isJCSpeaking) return;
+
+            clearTimeout(restartTimer);
+
+            restartTimer = setTimeout(() => {
+                if (!wakeModeEnabled || isJCSpeaking) return;
+
+                try {
+                    rec.start();
+                } catch (e) {
+                    // Already running
+                }
+            }, 300);
+        };
+
+        return rec;
+    }
+
+    function resumeRecognitionIfNeeded() {
+        if (!wakeModeEnabled || isJCSpeaking || jarvisWorking || !recognition) return;
+
+        try {
+            recognition.start();
+        } catch (e) {
+            // Already running
+        }
+    }
+
+    // =====================================================================
+    // VOICE MODE TOGGLE
+    // =====================================================================
+
+    function enableWakeMode() {
+        if (!speechSupported) {
+            setLabel('Voice recognition is not supported in this browser');
+            return;
+        }
+
+        wakeModeEnabled = true;
+        recognition = recognition || initRecognition();
+
+        try {
+            recognition.start();
+        } catch (e) {
+            // Already running
+        }
+
+        wakeToggle.classList.add('border-emerald-400/30', 'text-emerald-300');
+        wakeToggle.setAttribute('aria-pressed', 'true');
+
+        wakeDot.classList.remove('bg-white/20');
+        wakeDot.classList.add('bg-emerald-400');
+
+        wakeLabel.textContent = 'Voice On';
+
+        setAiState('armed');
+        setLabel(getWakePhraseLabel());
+
+        debugLog('VOICE', 'Wake mode enabled');
+    }
+
+    function disableWakeMode() {
+        wakeModeEnabled = false;
+        listeningForCommand = false;
+        conversationMode = false;
+
+        clearTimeout(restartTimer);
+        clearTimeout(conversationTimer);
+
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                // noop
+            }
+        }
+
+        wakeToggle.classList.remove('border-emerald-400/30', 'text-emerald-300');
+        wakeToggle.setAttribute('aria-pressed', 'false');
+
+        wakeDot.classList.add('bg-white/20');
+        wakeDot.classList.remove('bg-emerald-400');
+
+        wakeLabel.textContent = 'Enable Voice';
+
+        setAiState('idle');
+        setLabel(getIdleLabel());
+
+        debugLog('VOICE', 'Wake mode disabled');
+    }
+
+    wakeToggle.addEventListener('click', function () {
+        if (wakeModeEnabled) {
+            disableWakeMode();
+        } else {
+            enableWakeMode();
+        }
+    });
+
+    // =====================================================================
+    // INITIALIZATION
+    // =====================================================================
+
+    setAiState('idle');
+
+    if (!speechSupported) {
+        setLabel('Voice recognition is not supported in this browser — type your command below');
+    }
+
+    // Load current AI credit balance
+    loadCreditBalance();
+
+    // Refresh credit balance every 60 seconds
+    setInterval(loadCreditBalance, 60000);
+
+    // PERF: don't compete with page load. First check after 4s, then every 30s.
+    setTimeout(guardedEmailCheck, 4000); // reschedules itself
+
+    debugLog('APP', 'JC Assistant initialized');
+
+})();
+</script>
+
+{{-- =====================================================================
+     AMBIENT PARTICLE NETWORK (page background)
+     ===================================================================== --}}
+<script>
+(function () {
+    const canvas = document.getElementById('jc-network-bg');
+    if (!canvas || !canvas.getContext) return;
+
+    const ctx = canvas.getContext('2d');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const LINK_DIST = 130;
+    const LINK_DIST_SQ = LINK_DIST * LINK_DIST;
+
+    let width = 0;
+    let height = 0;
+    let points = [];
+
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+
+    function makePoints() {
+        const count = Math.min(70, Math.floor((width * height) / 26000));
+        points = Array.from({ length: count }, () => ({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            vx: (Math.random() - 0.5) * 0.12,
+            vy: (Math.random() - 0.5) * 0.12,
+        }));
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.fillStyle = 'rgba(110, 231, 255, 0.55)';
+        for (const p of points) {
+            if (!reducedMotion) {
+                p.x += p.vx;
+                p.y += p.vy;
+
+                if (p.x < 0 || p.x > width) p.vx *= -1;
+                if (p.y < 0 || p.y > height) p.vy *= -1;
+            }
+
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(110, 231, 255, 0.35)';
+        for (let i = 0; i < points.length; i++) {
+            const a = points[i];
+            for (let j = i + 1; j < points.length; j++) {
+                const b = points[j];
+                const dx = a.x - b.x;
+                const dy = a.y - b.y;
+                const d2 = dx * dx + dy * dy; // squared distance: no hypot in the hot loop
+
+                if (d2 < LINK_DIST_SQ) {
+                    ctx.globalAlpha = 1 - Math.sqrt(d2) / LINK_DIST;
+                    ctx.beginPath();
+                    ctx.moveTo(a.x, a.y);
+                    ctx.lineTo(b.x, b.y);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        ctx.globalAlpha = 1;
+    }
+
+    function loop() {
+        requestAnimationFrame(loop);
+        if (document.hidden) return; // PERF: no work in background tabs
+        draw();
+    }
+
+    window.addEventListener('resize', () => {
+        resize();
+        makePoints();
+        if (reducedMotion) draw();
+    });
+
+    resize();
+    makePoints();
+
+    if (reducedMotion) {
+        draw();
+    } else {
+        loop();
+    }
+})();
+</script>
+
+{{-- Avatar state and pulse hooks used by the voice interface. --}}
+<script>
+(() => {
+    const wrap = document.getElementById('jarvis-avatar-wrap');
+    const svg  = document.getElementById('jc-avatar-portrait');
+    if (!wrap || !svg) return;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const NS = 'http://www.w3.org/2000/svg';
+    const q  = (sel) => svg.querySelector(sel);
+
+    const track = q('#jc-avatar-track');
+    const gazeL = q('.jc-gaze-l');
+    const gazeR = q('.jc-gaze-r');
+    const eyes  = q('.jc-avatar-eyes');
+    const halo  = q('#jc-halo-ticks');
+    const motes = q('#jc-motes');
+    const bust  = q('.jc-avatar-bust');
+    const orbit = q('.jc-avatar-orbit');
+
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const lerp  = (a, b, k) => a + (b - a) * k;
+
+    let state = 'idle';
+    let level = 0;            // 0..1 speech energy, decays every frame
+    let lastPulse = -9999;    // last word-boundary time (ms)
+    let lastPointer = -9999;  // last pointer move (ms)
+    let pulseTimer;
+    let frameNo = 0;
+    let browKick = 0;         // brief brow raise on emphasis
+    let bob = 0;              // brief head bob on stressed words
+
+    const gaze = { x: 0, y: 0, tx: 0, ty: 0 };
+    const head = { x: 0, y: 0, tx: 0, ty: 0 };
+    const sac  = { x: 0, y: 0 };                       // micro-saccade offset
+    const face = { wide: 1, open: 0, smile: 0.35, brow: 0, pupil: 1 };
+
+    // Mood per state
+    const LOOK = {
+        idle:      { smile: 0.35, pupil: 1.00, brow: 0 },
+        armed:     { smile: 0.30, pupil: 1.05, brow: 0.1 },
+        listening: { smile: 0.55, pupil: 1.25, brow: 0.6 },
+        thinking:  { smile: 0.00, pupil: 0.82, brow: -0.2 },
+        speaking:  { smile: 0.45, pupil: 1.05, brow: 0.15 },
+    };
+
+    // ---------------------------------------------------------------
+    // Visemes: [mouth openness, mouth width] per vowel
+    // ---------------------------------------------------------------
+    const VIS = { a: [1.0, 1.12], e: [0.55, 1.25], i: [0.35, 1.30], o: [0.85, 0.78], u: [0.60, 0.65] };
+    const vis = { open: 0.12, wide: 1 };
+    let visTimers = [];
+
+    function playWord(word, ms) {
+        visTimers.forEach(clearTimeout);
+        visTimers = [];
+
+        const found = word.toLowerCase().match(/[aeiouy]/g) || ['e'];
+        const step = clamp(ms / found.length, 60, 150);
+
+        found.forEach((v, i) => {
+            visTimers.push(setTimeout(() => {
+                const s = VIS[v === 'y' ? 'i' : v];
+                vis.open = s[0];
+                vis.wide = s[1];
+            }, i * step));
+        });
+
+        visTimers.push(setTimeout(() => { vis.open = 0.12; vis.wide = 1; }, found.length * step));
+    }
+
+    // ---------------------------------------------------------------
+    // Voice halo geometry: 270-degree ring, open at the bottom
+    // ---------------------------------------------------------------
+    const N = 64, CX = 450, CY = 265, R0 = 248;
+    const A0 = 135 * Math.PI / 180, SPAN = 270 * Math.PI / 180;
+    const COS = [], SIN = [];
+    for (let i = 0; i < N; i++) {
+        const a = A0 + SPAN * i / (N - 1);
+        COS.push(Math.cos(a));
+        SIN.push(Math.sin(a));
+    }
+
+    function drawHalo(t) {
+        if (!halo) return;
+        const time = t * 0.001;
+        const sweep = state === 'thinking' ? (time * 22) % (N + 12) - 6 : -99;
+        let d = '';
+
+        for (let i = 0; i < N; i++) {
+            const n   = 0.5 + 0.5 * Math.sin(i * 1.7 + time * 5) * Math.sin(i * 0.55 - time * 3.1);
+            const env = 0.55 + 0.45 * Math.sin(Math.PI * i / (N - 1));
+            let amp = 0.07 + 0.025 * Math.sin(time * 1.4 + i * 0.3);
+
+            if (state === 'listening')      amp += 0.16 + 0.16 * n;
+            else if (state === 'speaking')  amp += level * (0.35 + 0.65 * n) * 1.1;
+            if (sweep > -50)                amp += 0.6 * Math.exp(-((i - sweep) * (i - sweep)) / 10);
+
+            const len = 3 + 32 * clamp(amp * env, 0, 1);
+            const x0 = CX + COS[i] * R0, y0 = CY + SIN[i] * R0;
+            const x1 = CX + COS[i] * (R0 + len), y1 = CY + SIN[i] * (R0 + len);
+            d += 'M' + x0.toFixed(1) + ' ' + y0.toFixed(1) + 'L' + x1.toFixed(1) + ' ' + y1.toFixed(1);
+        }
+        halo.setAttribute('d', d);
+    }
+
+    // ---------------------------------------------------------------
+    // Rising motes (skipped for reduced motion)
+    // ---------------------------------------------------------------
+    if (motes && !reduced) {
+        for (let i = 0; i < 14; i++) {
+            const c = document.createElementNS(NS, 'circle');
+            c.setAttribute('class', 'jc-mote');
+            c.setAttribute('cx', (210 + Math.random() * 480).toFixed(0));
+            c.setAttribute('cy', (760 + Math.random() * 20).toFixed(0));
+            c.setAttribute('r', (1 + Math.random() * 1.6).toFixed(1));
+            c.style.setProperty('--dur', (7 + Math.random() * 7).toFixed(1) + 's');
+            c.style.setProperty('--delay', (-Math.random() * 12).toFixed(1) + 's');
+            c.style.setProperty('--dx', ((Math.random() - 0.5) * 60).toFixed(0) + 'px');
+            motes.appendChild(c);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Gaze: follows the cursor, drifts on its own, looks up when thinking
+    // ---------------------------------------------------------------
+    window.addEventListener('pointermove', (e) => {
+        const r = svg.getBoundingClientRect();
+        const cx = r.left + r.width * 0.5;
+        const cy = r.top + r.height * 0.3;
+        head.tx = clamp((e.clientX - cx) / (window.innerWidth * 0.5), -1, 1);
+        head.ty = clamp((e.clientY - cy) / (window.innerHeight * 0.6), -1, 1);
+        lastPointer = performance.now();
+    }, { passive: true });
+
+    function idleDrift() {
+        const idle = performance.now() - lastPointer > 3000;
+        if (idle) {
+            head.tx = (Math.random() - 0.5) * 0.7;
+            head.ty = (Math.random() - 0.5) * 0.4;
+        }
+        setTimeout(idleDrift, 1500 + Math.random() * 2500);
+    }
+
+    // Micro-saccades: tiny snap movements of the eyes
+    function saccade() {
+        if (state !== 'thinking' && !document.hidden) {
+            sac.x = (Math.random() - 0.5) * 0.5;
+            sac.y = (Math.random() - 0.5) * 0.35;
+            setTimeout(() => { sac.x = 0; sac.y = 0; }, 120 + Math.random() * 220);
+        }
+        setTimeout(saccade, 700 + Math.random() * 2200);
+    }
+
+    // ---------------------------------------------------------------
+    // Blink at an irregular rhythm, occasionally twice
+    // ---------------------------------------------------------------
+    function blink() {
+        if (!eyes) return;
+        eyes.classList.add('jc-blink');
+        setTimeout(() => eyes.classList.remove('jc-blink'), 110);
+    }
+
+    function scheduleBlink() {
+        setTimeout(() => {
+            if (!document.hidden) {
+                blink();
+                if (Math.random() < 0.18) setTimeout(blink, 240);
+            }
+            scheduleBlink();
+        }, 2200 + Math.random() * 4200);
+    }
+
+    // ---------------------------------------------------------------
+    // Hologram glitch: rare, and on wake
+    // ---------------------------------------------------------------
+    function glitch() {
+        if (reduced) return;
+        svg.classList.add('jc-glitch');
+        setTimeout(() => svg.classList.remove('jc-glitch'), 280);
+    }
+
+    function scheduleGlitch() {
+        setTimeout(() => {
+            if (!document.hidden) glitch();
+            scheduleGlitch();
+        }, 9000 + Math.random() * 14000);
+    }
+
+    // ---------------------------------------------------------------
+    // Main loop
+    // ---------------------------------------------------------------
+    function frame(t) {
+        requestAnimationFrame(frame);
+        if (document.hidden) return;
+        frameNo++;
+
+        // Gaze target depends on state
+        if (state === 'thinking') { gaze.tx = -0.7; gaze.ty = -0.8; }
+        else {
+            const k = state === 'idle' || state === 'armed' ? 1 : 0.5; // look at the user when engaged
+            gaze.tx = head.tx * k;
+            gaze.ty = head.ty * k;
+        }
+
+        gaze.x += (gaze.tx - gaze.x) * 0.14;
+        gaze.y += (gaze.ty - gaze.y) * 0.14;
+        head.x += (head.tx - head.x) * 0.06;
+        head.y += (head.ty - head.y) * 0.06;
+
+        const gt = 'translate(' + ((gaze.x + sac.x) * 5).toFixed(2) + 'px,' + ((gaze.y + sac.y) * 3.2).toFixed(2) + 'px)';
+        if (gazeL) gazeL.style.transform = gt;
+        if (gazeR) gazeR.style.transform = gt;
+
+        // Head tracking + bob on stressed words
+        bob *= 0.9;
+        if (track) {
+            track.style.transform =
+                'rotate(' + (head.x * 2.2).toFixed(2) + 'deg) translate(' +
+                (head.x * 4).toFixed(2) + 'px,' + (head.y * 3 + bob * 2.2).toFixed(2) + 'px)';
+        }
+
+        // Depth parallax: bust drifts against the head, cage drifts with it
+        if (bust)  bust.style.translate  = (-head.x * 5).toFixed(2) + 'px ' + (-head.y * 2).toFixed(2) + 'px';
+        if (orbit) orbit.style.translate = (head.x * 8).toFixed(2) + 'px ' + (head.y * 4).toFixed(2) + 'px';
+
+        // Speech energy: real word boundaries when available, synthetic fallback otherwise
+        level *= 0.86;
+        if (state === 'speaking' && t - lastPulse > 700) {
+            const time = t * 0.001;
+            level = Math.max(level, 0.3 + 0.25 * Math.abs(Math.sin(time * 9) * Math.sin(time * 5.3)));
+        }
+
+        const driven = t - lastPulse < 650;
+        wrap.classList.toggle('jc-mouth-driven', driven);
+
+        // Face: mood, mouth shape, brows, pupils
+        const look = LOOK[state] || LOOK.idle;
+        browKick *= 0.9;
+        face.smile = lerp(face.smile, look.smile, 0.05);
+        face.pupil = lerp(face.pupil, look.pupil, 0.08);
+        face.brow  = lerp(face.brow, look.brow + browKick, 0.2);
+        face.open  = lerp(face.open, driven ? vis.open : 0, 0.4);
+        face.wide  = lerp(face.wide, driven ? vis.wide : (state === 'speaking' ? 1 + 0.1 * Math.sin(t * 0.011) : 1), 0.35);
+
+        const s = wrap.style;
+        s.setProperty('--jc-mouth', face.open.toFixed(3));
+        s.setProperty('--jc-wide',  face.wide.toFixed(3));
+        s.setProperty('--jc-smile', clamp(face.smile, 0, 1).toFixed(3));
+        s.setProperty('--jc-brow',  face.brow.toFixed(3));
+        s.setProperty('--jc-pupil', face.pupil.toFixed(3));
+        s.setProperty('--jc-level', level.toFixed(3));
+
+        // Halo: full rate while active, half rate at idle
+        if (state !== 'idle' && state !== 'armed') drawHalo(t);
+        else if (frameNo % 2 === 0) drawHalo(t);
+    }
+
+    // ---------------------------------------------------------------
+    // Public API used by the main script
+    // ---------------------------------------------------------------
+    window.jcAvatar = {
+        setState(next) {
+            if (next === 'listening' && state !== 'listening') {
+                face.smile = Math.min(1, face.smile + 0.35); // greeting smile, settles on its own
+                glitch();                                     // "materialise" flicker on wake
+            }
+            state = next;
+            wrap.dataset.state = next;
+            if (next !== 'speaking') level = 0;
+            if (reduced) drawHalo(0);
+        },
+        // pulse(event, fullText): call on each speech boundary
+        pulse(ev, text) {
+            lastPulse = performance.now();
+            level = 0.55 + Math.random() * 0.45;
+            bob = 0.5 + Math.random() * 0.5;
+
+            if (ev && text && typeof ev.charIndex === 'number' && (!ev.name || ev.name === 'word')) {
+                const rest = text.slice(ev.charIndex);
+                const len = ev.charLength || (rest.search(/[\s,.!?;:]|$/) || 5);
+                const word = rest.slice(0, len || 5);
+                playWord(word, (len || 5) * 60);
+                if (len > 6 || /[,.!?]/.test(rest.charAt(len))) browKick = 0.7; // emphasis
+            } else if (Math.random() < 0.25) {
+                browKick = 0.6;
+            }
+
+            wrap.classList.add('jc-avatar-pulse');
+            window.clearTimeout(pulseTimer);
+            pulseTimer = window.setTimeout(() => wrap.classList.remove('jc-avatar-pulse'), 420);
+        },
+    };
+
+    // Pick up whatever state the main script set before this script loaded
+    window.jcAvatar.setState(window.jcAiStateName || 'idle');
+
+    if (reduced) {
+        drawHalo(0);
+    } else {
+        idleDrift();
+        scheduleBlink();
+        saccade();
+        scheduleGlitch();
+        requestAnimationFrame(frame);
+    }
+})();
+</script>
+
+{{-- =====================================================================
+     SETTINGS DRAWER + MAILBOX
+     ===================================================================== --}}
+<script>
+(function () {
+    const $ = (id) => document.getElementById(id);
+
+    const drawer = $('jc-settings-drawer');
+    const backdrop = $('jc-settings-backdrop');
+    const statusEl = $('jc-settings-status');
+
+    const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+    // Debug logging is opt-in: localStorage.setItem('jc_debug', 'true')
+    const DEBUG = localStorage.getItem('jc_debug') === 'true';
+
+    function debugLog(msg, data) {
+        if (DEBUG) console.log(`[Settings] ${msg}`, data ?? '');
+    }
+
+    const INPUT_CLS = 'mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25';
+    const LABEL_CLS = 'text-[9px] uppercase text-white/40 font-medium';
+
+    // =====================================================================
+    // DRAWER OPEN / CLOSE
+    // =====================================================================
+
+    function showSettingsLoadingState() {
+        const keyStatus = $('jc-key-status');
+        if (keyStatus) {
+            keyStatus.textContent = 'Loading...';
+            keyStatus.style.color = '#9ca3af';
+        }
+
+        const pwStatus = $('jc-email-pw-status');
+        if (pwStatus) {
+            pwStatus.textContent = 'Loading...';
+            pwStatus.style.color = '#9ca3af';
+        }
+    }
+
+    function openSettings(tabName) {
+        if (!drawer) return;
+
+        if (typeof tabName === 'string') activateTab(tabName);
+
+        drawer.classList.remove('translate-x-full');
+        backdrop?.classList.remove('hidden');
+        drawer.setAttribute('aria-hidden', 'false');
+
+        showSettingsLoadingState();
+
+        loadSettings();
+    }
+
+    function closeSettings() {
+        if (!drawer) return;
+
+        drawer.classList.add('translate-x-full');
+        backdrop?.classList.add('hidden');
+        drawer.setAttribute('aria-hidden', 'true');
+    }
+
+    $('jc-settings-btn')?.addEventListener('click', () => openSettings());
+    $('jc-mailbox-chip')?.addEventListener('click', () => openSettings('email'));
+    $('jc-settings-close')?.addEventListener('click', closeSettings);
+    backdrop?.addEventListener('click', closeSettings);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeSettings();
+    });
+
+    // =====================================================================
+    // TAB NAVIGATION
+    // =====================================================================
+
+    function activateTab(tabName) {
+        document.querySelectorAll('.jc-tab').forEach((t) => {
+            const active = t.dataset.tab === tabName;
+            t.classList.toggle('text-white', active);
+            t.classList.toggle('text-white/40', !active);
+        });
+
+        document.querySelectorAll('.jc-tab-panel').forEach((panel) => {
+            panel.classList.toggle('hidden', panel.dataset.panel !== tabName);
+        });
+    }
+
+    document.querySelectorAll('.jc-tab').forEach((tab) => {
+        tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+    });
+
+    // =====================================================================
+    // API KEY VISIBILITY TOGGLE
+    // =====================================================================
+
+    $('jc-toggle-key')?.addEventListener('click', () => {
+        const keyInput = $('jc-set-api-key');
+        const toggle = $('jc-toggle-key');
+        if (!keyInput) return;
+
+        const isPassword = keyInput.type === 'password';
+        keyInput.type = isPassword ? 'text' : 'password';
+        if (toggle) toggle.textContent = isPassword ? 'Hide' : 'Show';
+    });
+
+    $('jc-toggle-email-pw')?.addEventListener('click', () => {
+        const pw = $('jc-set-email-password');
+        const toggle = $('jc-toggle-email-pw');
+        if (!pw) return;
+        const isPassword = pw.type === 'password';
+        pw.type = isPassword ? 'text' : 'password';
+        if (toggle) toggle.textContent = isPassword ? 'Hide' : 'Show';
+    });
+
+    // =====================================================================
+    // UTILITIES
+    // =====================================================================
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = String(value ?? '');
+        return div.innerHTML;
+    }
+
+    function showStatus(message, isError = false, duration = 3000) {
+        if (!statusEl) return;
+
+        statusEl.textContent = message;
+        statusEl.style.color = isError ? '#ef4444' : '#a3e635';
+
+        if (!isError && duration > 0) {
+            setTimeout(() => {
+                if (statusEl.textContent === message) statusEl.textContent = '';
+            }, duration);
+        }
+    }
+
+    function friendlyError(error) {
+        if (typeof window.jcDescribeFetchError === 'function') {
+            return window.jcDescribeFetchError(error);
+        }
+        return (error && error.message) || 'Unknown error';
+    }
+
+    function getErrorMessages(data) {
+        if (data?.errors && typeof data.errors === 'object') {
+            return Object.entries(data.errors)
+                .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages[0] : messages}`)
+                .join('\n');
+        }
+
+        return data?.message || data?.error || 'Unknown error';
+    }
+
+    // =====================================================================
+    // GENERAL SETTINGS: READ / VALIDATE / APPLY / FILL
+    // =====================================================================
+
+    function readForm() {
+        return {
+            ai_name: $('jc-set-ai-name')?.value.trim() || '',
+            owner_name: $('jc-set-owner-name')?.value.trim() || '',
+            api_key: $('jc-set-api-key')?.value.trim() || '',
+            allowed_actions: Array.from(document.querySelectorAll('.jc-scope-cb:checked')).map((cb) => cb.value),
+            confirm_before_send: $('jc-set-confirm-send')?.checked ?? true,
+            tone: $('jc-set-tone')?.value || 'professional',
+            daily_credit_limit: parseInt($('jc-set-credit-limit')?.value, 10) || 0,
+            scope_of_work: $('jc-set-scope')?.value.trim() || '',
+            limitations: $('jc-set-limits')?.value.trim() || '',
+
+            // Mailbox (password blank = keep the current one)
+            email_address: $('jc-set-email-address')?.value.trim() || '',
+            email_password: $('jc-set-email-password')?.value || '',
+            imap_host: $('jc-set-imap-host')?.value.trim() || '',
+            imap_port: parseInt($('jc-set-imap-port')?.value, 10) || null,
+            imap_encryption: $('jc-set-imap-encryption')?.value || 'ssl',
+            smtp_host: $('jc-set-smtp-host')?.value.trim() || '',
+            smtp_port: parseInt($('jc-set-smtp-port')?.value, 10) || null,
+            smtp_encryption: $('jc-set-smtp-encryption')?.value || 'ssl',
+        };
+    }
+
+    function validateSettings() {
+        const aiName = $('jc-set-ai-name')?.value.trim() || '';
+        const ownerName = $('jc-set-owner-name')?.value.trim() || '';
+
+        if (aiName.length > 30) {
+            showStatus('AI name must be 30 characters or less', true, 0);
+            return false;
+        }
+
+        if (ownerName.length > 60) {
+            showStatus('Owner name must be 60 characters or less', true, 0);
+            return false;
+        }
+
+        const creditLimit = parseInt($('jc-set-credit-limit')?.value, 10);
+
+        if (isNaN(creditLimit) || creditLimit < 0) {
+            showStatus('Daily credit limit must be zero or a positive number', true, 0);
+            return false;
+        }
+
+        const emailAddress = $('jc-set-email-address')?.value.trim() || '';
+        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
+            showStatus('Enter a valid email address', true, 0);
+            return false;
+        }
+
+        const typedPassword = $('jc-set-email-password')?.value || '';
+        if (emailAddress && !typedPassword && !lastSettings?.has_email_password) {
+            showStatus('Enter the mailbox password for this email', true, 0);
+            return false;
+        }
+
+        for (const [id, label] of [['jc-set-imap-port', 'IMAP'], ['jc-set-smtp-port', 'SMTP']]) {
+            const raw = $(id)?.value;
+            if (raw) {
+                const port = parseInt(raw, 10);
+                if (isNaN(port) || port < 1 || port > 65535) {
+                    showStatus(label + ' port must be between 1 and 65535', true, 0);
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // =====================================================================
+    // REGISTERED MAILBOX (header chip, Email tab card, inbox drawer line)
+    // =====================================================================
+
+    let lastSettings = null;
+
+    function showMailboxForm(visible) {
+        $('jc-mailbox-form')?.classList.toggle('hidden', !visible);
+        if (visible) $('jc-set-email-address')?.focus();
+    }
+
+    function renderActiveMailbox(settings) {
+        lastSettings = settings || lastSettings;
+
+        const address = (settings?.email_address || '').trim();
+        const hasPw = Boolean(settings?.has_email_password);
+        const registered = address !== '';
+
+        const imap = `${settings?.imap_host || '-'}:${settings?.imap_port || '-'}`;
+        const smtp = `${settings?.smtp_host || '-'}:${settings?.smtp_port || '-'}`;
+
+        const warning = registered && !hasPw
+            ? 'No password saved for this mailbox, so JC cannot connect. Press Change and enter the mailbox password.'
+            : '';
+
+        const ok = registered && !warning;
+        const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+
+        // Email tab card
+        $('jc-am-empty')?.classList.toggle('hidden', registered);
+        $('jc-am-registered')?.classList.toggle('hidden', !registered);
+
+        setText('jc-am-address', address);
+        setText('jc-am-imap', imap);
+        setText('jc-am-smtp', smtp);
+        setText('jc-am-pw', hasPw ? '••••••••' : 'not saved');
+
+        const warn = $('jc-am-warning');
+        if (warn) {
+            warn.textContent = warning;
+            warn.classList.toggle('hidden', !warning);
+        }
+
+        const card = $('jc-active-mailbox-card');
+        if (card) card.style.borderColor = ok ? 'rgba(52, 211, 153, 0.25)' : 'rgba(255, 255, 255, 0.10)';
+
+        // Header chip
+        setText('jc-mailbox-chip-text', registered ? address : 'No email registered');
+        $('jc-mailbox-chip-badge')?.classList.add('hidden');
+
+        const dot = $('jc-mailbox-dot');
+        if (dot) dot.style.background = ok ? '#34d399' : (registered ? '#fb923c' : '#6b7280');
+
+        const chip = $('jc-mailbox-chip');
+        if (chip) {
+            chip.title = registered
+                ? `Active mailbox: ${address}. Click to change.`
+                : 'No email registered. Click to add one.';
+        }
+
+        // Inbox drawer line
+        setText('jc-inbox-mailbox', registered ? `Mailbox: ${address}` : 'No email registered');
+
+        // Form: hidden when a mailbox is registered, so the card is what you see
+        showMailboxForm(false);
+    }
+
+    $('jc-am-add')?.addEventListener('click', () => showMailboxForm(true));
+    $('jc-am-change')?.addEventListener('click', () => showMailboxForm(true));
+    $('jc-am-cancel')?.addEventListener('click', () => {
+        if (lastSettings) fillForm(lastSettings); // discard edits
+        showMailboxForm(false);
+    });
+
+    $('jc-am-remove')?.addEventListener('click', async () => {
+        if (!confirm('Remove the registered email from JC?\n\nJC will no longer be able to read or send email until you add one again.')) {
+            return;
+        }
+
+        showStatus('Removing email...');
+
+        try {
+            const response = await fetch('/jarvis/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body: JSON.stringify({
+                    ...readForm(),
+                    api_key: '',
+                    email_address: '',
+                    email_password: '',
+                    imap_host: '',
+                    imap_port: null,
+                    smtp_host: '',
+                    smtp_port: null,
+                    clear_email: true,
+                }),
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(getErrorMessages(data));
+
+            if (data.settings) fillForm(data.settings);
+            showStatus('✓ Email removed.');
+        } catch (error) {
+            console.error('Remove email error:', error);
+            showStatus('✗ ' + friendlyError(error), true, 0);
+        }
+    });
+
+    function applyNames(aiName, ownerName) {
+        const name = (aiName || 'JC').trim() || 'JC';
+
+        document.querySelectorAll('[data-ai-name]').forEach((el) => {
+            el.textContent = name;
+        });
+
+        document.title = name + ' - AI Assistant';
+
+        const input = $('jarvis-input');
+        if (input) input.placeholder = `Say "Hello ${name}..." or type here`;
+
+        window.jcAiName = name;
+        window.jcOwnerName = ownerName || '';
+
+        localStorage.setItem('jc_ai_name', name);
+        localStorage.setItem('jc_owner_name', ownerName || '');
+
+        if (typeof window.jcSetWakeName === 'function') {
+            window.jcSetWakeName(name);
+        }
+
+        debugLog('Names applied', { name, ownerName });
+    }
+
+    function fillForm(settings) {
+        if (!settings) return;
+
+        debugLog('Filling form', {
+            ...settings,
+            api_key: settings.has_api_key ? '[SAVED]' : '[NOT SET]',
+        });
+
+        $('jc-set-ai-name').value = settings.ai_name || 'JC';
+        $('jc-set-owner-name').value = settings.owner_name || '';
+        $('jc-set-confirm-send').checked = settings.confirm_before_send !== false;
+        $('jc-set-tone').value = settings.tone || 'professional';
+        $('jc-set-credit-limit').value = settings.daily_credit_limit || 0;
+        $('jc-set-scope').value = settings.scope_of_work || '';
+        $('jc-set-limits').value = settings.limitations || '';
+
+        if (Array.isArray(settings.allowed_actions)) {
+            document.querySelectorAll('.jc-scope-cb').forEach((cb) => {
+                cb.checked = settings.allowed_actions.includes(cb.value);
+            });
+        }
+
+        const keyStatus = $('jc-key-status');
+        if (keyStatus) {
+            if (settings.has_api_key) {
+                keyStatus.textContent = `✓ Key saved (${settings.api_key_hint || 'configured'}). Enter a new one to replace it.`;
+                keyStatus.style.color = '#34d399';
+            } else {
+                keyStatus.textContent = 'No key saved.';
+                keyStatus.style.color = '#9ca3af';
+            }
+        }
+
+        // Never populate the actual API key field
+        $('jc-set-api-key').value = '';
+
+        // Mailbox
+        $('jc-set-email-address').value = settings.email_address || '';
+        $('jc-set-imap-host').value = settings.imap_host || '';
+        $('jc-set-imap-port').value = settings.imap_port || '';
+        $('jc-set-imap-encryption').value = settings.imap_encryption || 'ssl';
+        $('jc-set-smtp-host').value = settings.smtp_host || '';
+        $('jc-set-smtp-port').value = settings.smtp_port || '';
+        $('jc-set-smtp-encryption').value = settings.smtp_encryption || 'ssl';
+
+        // Never populate the mailbox password field
+        $('jc-set-email-password').value = '';
+
+        const pwStatus = $('jc-email-pw-status');
+        if (pwStatus) {
+            if (settings.has_email_password) {
+                pwStatus.textContent = '✓ Password saved. Enter a new one to replace it.';
+                pwStatus.style.color = '#34d399';
+            } else {
+                pwStatus.textContent = 'No password saved.';
+                pwStatus.style.color = '#9ca3af';
+            }
+        }
+
+        const workflowLink = $('jc-workflow-link');
+        if (workflowLink && settings.workflow_url) {
+            workflowLink.href = settings.workflow_url;
+        }
+
+        renderActiveMailbox(settings);
+        applyNames(settings.ai_name, settings.owner_name);
+    }
+
+    // =====================================================================
+    // LOAD / SAVE GENERAL SETTINGS
+    // =====================================================================
+
+    async function loadSettings() {
+        try {
+            debugLog('Loading settings...');
+
+            const response = await fetch('/jarvis/settings', {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-store',
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(getErrorMessages(data));
+
+            if (data.success && data.settings) {
+                fillForm(data.settings);
+            }
+
+            return data;
+
+        } catch (error) {
+            console.error('[Settings] Error loading settings:', error);
+
+            const msg = friendlyError(error);
+            showStatus('✗ ' + msg, true, 0);
+
+            const keyStatus = $('jc-key-status');
+            if (keyStatus) {
+                keyStatus.textContent = 'Could not load key status.';
+                keyStatus.style.color = '#ef4444';
+            }
+
+            const pwStatus = $('jc-email-pw-status');
+            if (pwStatus) {
+                pwStatus.textContent = 'Could not load password status.';
+                pwStatus.style.color = '#ef4444';
+            }
+
+            const chipText = $('jc-mailbox-chip-text');
+            if (chipText) chipText.textContent = 'Mailbox unavailable';
+            const amAddress = $('jc-am-address');
+            if (amAddress) amAddress.textContent = 'Could not load mailbox';
+            $('jc-am-empty')?.classList.add('hidden');
+            $('jc-am-registered')?.classList.remove('hidden');
+            return null;
+        }
+    }
+
+    $('jc-settings-save')?.addEventListener('click', async () => {
+        if (!validateSettings()) return;
+
+        showStatus('Saving settings...');
+
+        const payload = readForm();
+
+        // Never log the actual API key
+        debugLog('Saving settings:', {
+            ...payload,
+            api_key: payload.api_key ? '[REDACTED]' : '',
+            email_password: payload.email_password ? '[REDACTED]' : '',
+        });
+
+        try {
+            const response = await fetch('/jarvis/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body: JSON.stringify(payload),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) throw new Error(getErrorMessages(data));
+
+            $('jc-set-api-key').value = '';
+            $('jc-set-email-password').value = '';
+
+            if (data.settings) fillForm(data.settings);
+
+            showStatus('✓ Settings saved successfully!');
+        } catch (error) {
+            console.error('Settings save error:', error);
+            showStatus('✗ ' + error.message, true, 0);
+        }
+    });
+
+    // Load settings once the page has finished loading so the header shows the active mailbox
+    // (and the saved AI name) without opening the drawer. One small DB-only request.
+    function initialSettingsLoad() {
+        setTimeout(loadSettings, 500);
+    }
+
+    if (document.readyState === 'complete') {
+        initialSettingsLoad();
+    } else {
+        window.addEventListener('load', initialSettingsLoad, { once: true });
+    }
+
+    debugLog('Settings module initialized');
+
+})();
+</script>
+
+</body>
+</html>
