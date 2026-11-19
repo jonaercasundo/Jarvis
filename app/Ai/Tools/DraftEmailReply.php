@@ -3,6 +3,7 @@
 namespace App\Ai\Tools;
 
 use App\Models\PendingEmailAction;
+use App\Services\ArtifactPresentationPlanner;
 use App\Services\GoDaddyEmailService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Contracts\Tool;
@@ -11,8 +12,15 @@ use Stringable;
 
 class DraftEmailReply implements Tool
 {
+    public function capabilityMetadata(): array
+    {
+        return ['category' => 'email', 'risk' => 'WRITE', 'operations' => ['stage_reply'], 'intent_verbs' => ['draft', 'reply', 'respond'], 'configuration' => 'imap',
+            'permissions' => ['read_emails', 'draft_replies'], 'requires_confirmation' => true];
+    }
+
     public function __construct(
-        private GoDaddyEmailService $emailService
+        private GoDaddyEmailService $emailService,
+        private ?ArtifactPresentationPlanner $artifactPlanner = null,
     ) {}
 
     public function description(): Stringable|string
@@ -42,6 +50,13 @@ class DraftEmailReply implements Tool
             ],
             expiresInMinutes: config('jarvis.pending_action_ttl_minutes', 30),
         );
+
+        $this->artifactPlanner?->addEmailDraft([
+            'to' => (string) $to,
+            'subject' => (string) $subject,
+            'body' => (string) $body,
+            'confirmation_code' => (string) $pending->token,
+        ]);
 
         return json_encode([
             'success' => true,

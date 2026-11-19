@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
-    <title data-ai-name>AI Assistant</title>
+    <title data-ai-name>{{ $aiName }}</title>
 
     {{-- PERF: make sure `npm run build` has been run and public/hot does NOT exist in production. --}}
-    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    @vite(['resources/css/app.css', 'resources/js/app.js', 'resources/js/jarvis-avatar-3d.js'])
 
     {{-- PERF: warm up the CDN connections used for Three.js and the display font --}}
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -21,6 +21,7 @@
             --jc-cyan: 110, 231, 255;
             --jc-violet: 167, 139, 250;
             --jc-emerald: 52, 211, 153;
+            --jc-holo-intensity: 1;
         }
 
         html,
@@ -32,9 +33,10 @@
 
         body {
             background:
-                radial-gradient(900px 620px at 50% 49%, rgba(0, 150, 255, 0.14), transparent 68%),
-                radial-gradient(1100px 740px at 50% 105%, rgba(3, 62, 137, 0.26), transparent 72%),
-                #020817;
+                radial-gradient(ellipse at 50% 31%, rgba(17, 92, 142, calc(0.34 * var(--jc-holo-intensity))), transparent 46%),
+                radial-gradient(ellipse at 18% 68%, rgba(18, 89, 132, calc(0.18 * var(--jc-holo-intensity))), transparent 42%),
+                radial-gradient(ellipse at 84% 74%, rgba(79, 59, 139, calc(0.12 * var(--jc-holo-intensity))), transparent 40%),
+                linear-gradient(180deg, #07111f 0%, #081a2c 52%, #0b2440 100%);
             color: #e5e7eb;
             font-family: 'Sora', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
         }
@@ -45,9 +47,9 @@
             inset: 0;
             width: 100%;
             height: 100%;
-            z-index: 0;
+            z-index: 1;
             pointer-events: none;
-            opacity: 0.5;
+            opacity: calc(0.36 * var(--jc-holo-intensity));
         }
 
         /* Perspective floor grid, fades out toward the horizon */
@@ -60,19 +62,78 @@
             z-index: 0;
             pointer-events: none;
             background-image:
-                linear-gradient(rgba(var(--jc-cyan), 0.16) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(var(--jc-cyan), 0.16) 1px, transparent 1px);
-            background-size: 64px 64px;
+                linear-gradient(rgba(var(--jc-cyan), calc(0.15 * var(--jc-holo-intensity))) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(var(--jc-cyan), calc(0.15 * var(--jc-holo-intensity))) 1px, transparent 1px);
+            background-size: 72px 72px;
             transform: perspective(520px) rotateX(62deg);
             transform-origin: 50% 100%;
             -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 85%);
             mask-image: linear-gradient(to top, #000 0%, transparent 85%);
-            opacity: 0.18;
+            opacity: 0.24;
+            animation: jc-grid-breathe 9s ease-in-out infinite;
+        }
+
+        #jc-grid-bg::before {
+            content: "";
+            position: absolute;
+            inset: -10% 0 35%;
+            background: radial-gradient(ellipse at 50% 100%, rgba(29, 186, 241, calc(0.16 * var(--jc-holo-intensity))), transparent 68%);
+            pointer-events: none;
         }
 
         #jc-app {
             position: relative;
-            z-index: 1;
+            z-index: 4;
+        }
+
+        #jc-workspace {
+            --jc-workspace-width: 48%;
+            position: absolute;
+            z-index: 8;
+            top: 4rem;
+            right: 0;
+            bottom: 3rem;
+            display: flex;
+            width: var(--jc-workspace-width);
+            min-width: 320px;
+            flex-direction: column;
+            border-left: 1px solid rgba(110, 231, 255, 0.18);
+            background: linear-gradient(150deg, rgba(7, 20, 35, 0.96), rgba(8, 24, 43, 0.92));
+            box-shadow: -24px 0 70px rgba(0, 0, 0, 0.24);
+            transition: width 180ms ease;
+        }
+
+        #jc-workspace[hidden] { display: none; }
+
+        #jc-workspace-stage.has-artifacts {
+            width: calc(100% - var(--jc-workspace-width, 48%));
+            flex: 0 0 auto;
+            transition: width 180ms ease;
+        }
+
+        #jc-workspace-stage.has-artifacts > div { max-width: 52rem; }
+
+        #jc-workspace.is-collapsed #jc-workspace-artifacts,
+        #jc-workspace.is-collapsed #jc-workspace-minimized,
+        #jc-workspace.is-collapsed [data-workspace-splitter] { display: none; }
+
+        #jc-workspace.is-collapsed { width: 3.5rem; min-width: 3.5rem; }
+        #jc-workspace.is-collapsed .jc-workspace-header { justify-content: center; padding: 0.5rem; }
+        #jc-workspace.is-collapsed .jc-workspace-header > div:first-child,
+        #jc-workspace.is-collapsed .jc-workspace-header-actions button:not([data-workspace-action="collapse"]) { display: none; }
+
+        @media (max-width: 760px) {
+            #jc-workspace {
+                top: 4rem;
+                bottom: 3rem;
+                width: 100%;
+                min-width: 0;
+                border-left: 0;
+            }
+
+            #jc-workspace-stage.has-artifacts { width: 100%; }
+            #jc-app.jc-workspace-active:not(.jc-mobile-conversation) #jc-workspace-stage { visibility: hidden; }
+            #jc-app.jc-mobile-conversation #jc-workspace { display: none; }
         }
 
         /* ---------- Glass panels (PERF: blur radius kept low; it sits above animating canvases) ---------- */
@@ -107,7 +168,7 @@
         #jarvis-avatar-wrap {
             position: fixed;
             inset: 0;
-            z-index: 0;
+            z-index: 2;
             pointer-events: none;
             overflow: hidden;
         }
@@ -115,16 +176,52 @@
         #jarvis-avatar-wrap::before {
             content: "";
             position: absolute;
-            width: min(82vw, 820px);
-            aspect-ratio: 1;
+            z-index: 0;
+            width: min(88vw, 920px);
+            height: min(92vh, 940px);
             left: 50%;
-            top: 4%;
+            top: 1%;
             transform: translateX(-50%);
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(var(--jc-accent), 0.20), rgba(var(--jc-accent), 0.12) 43%, transparent 72%);
-            opacity: 0.78;
-            transition: opacity 0.45s ease, transform 0.45s ease, background 0.45s ease;
+            background:
+                radial-gradient(ellipse 31% 53% at 50% 43%, rgba(36, 196, 242, 0.19), transparent 100%),
+                radial-gradient(ellipse 58% 46% at 50% 38%, rgba(24, 102, 176, 0.22), transparent 72%),
+                radial-gradient(ellipse 70% 64% at 50% 42%, rgba(var(--jc-accent), 0.10), transparent 72%);
+            opacity: calc(0.88 * var(--jc-holo-intensity));
+            filter: blur(18px);
+            animation: jc-holo-breathe 8s ease-in-out infinite;
+            transition: opacity 0.45s ease, background 0.45s ease;
+            pointer-events: none;
         }
+
+        #jarvis-avatar-wrap::after {
+            content: "";
+            position: absolute;
+            z-index: 1;
+            inset: -18%;
+            background:
+                repeating-radial-gradient(ellipse at 50% 40%, transparent 0 225px, rgba(97, 219, 255, calc(0.105 * var(--jc-holo-intensity))) 226px 227px, transparent 228px 292px),
+                radial-gradient(ellipse at 50% 40%, transparent 0 33%, rgba(67, 175, 238, calc(0.07 * var(--jc-holo-intensity))) 33.1% 33.2%, transparent 33.4% 48%, rgba(151, 129, 255, calc(0.06 * var(--jc-holo-intensity))) 48.1% 48.2%, transparent 48.4%);
+            opacity: calc(0.72 * var(--jc-holo-intensity));
+            -webkit-mask-image: radial-gradient(ellipse at center, #000 24%, transparent 76%);
+            mask-image: radial-gradient(ellipse at center, #000 24%, transparent 76%);
+            animation: jc-hud-orbit 54s linear infinite;
+            pointer-events: none;
+        }
+
+        #jc-avatar-3d {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            display: none;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        #jarvis-avatar-wrap.jc-particles-ready #jc-avatar-3d,
+        #jarvis-avatar-wrap.jc-vrm-loading #jc-avatar-3d,
+        #jarvis-avatar-wrap.jc-vrm-ready #jc-avatar-3d { display: block; }
 
         #jc-avatar-portrait {
             position: absolute;
@@ -138,6 +235,7 @@
             opacity: 0.94;
             filter: drop-shadow(0 0 28px rgba(var(--jc-accent), 0.22));
             transition: filter 0.45s ease, opacity 0.45s ease;
+            visibility: hidden;
         }
 
         #jc-avatar-portrait .jc-avatar-head {
@@ -321,8 +419,8 @@
         }
 
         @keyframes jc-avatar-aura {
-            0%, 100% { opacity: 0.48; }
-            50% { opacity: 0.72; }
+            0%, 100% { opacity: calc(0.48 * var(--jc-holo-intensity)); }
+            50% { opacity: calc(0.72 * var(--jc-holo-intensity)); }
         }
 
         @keyframes jc-bust-glow {
@@ -387,7 +485,15 @@
 
             #jarvis-avatar-wrap::before {
                 width: 124vw;
+                height: 72vh;
                 top: 12%;
+            }
+
+            #jc-grid-bg {
+                left: -42%;
+                right: -42%;
+                height: 38vh;
+                background-size: 52px 52px;
             }
         }
 
@@ -404,42 +510,64 @@
         #jc-scrim {
             position: fixed;
             inset: 0;
-            z-index: 0;
+            z-index: 3;
             pointer-events: none;
             background:
-                linear-gradient(to top, rgba(2, 8, 23, 0.9) 0%, rgba(2, 8, 23, 0.58) 24%, transparent 52%),
-                linear-gradient(to bottom, rgba(2, 8, 23, 0.48), transparent 14%);
+                linear-gradient(to top, rgba(3, 12, 29, 0.76) 0%, rgba(3, 12, 29, 0.38) 25%, transparent 58%),
+                linear-gradient(to bottom, rgba(5, 15, 31, 0.24), transparent 18%);
+        }
+
+        #jarvis-command {
+            border-color: rgba(130, 221, 255, 0.2);
+            background: linear-gradient(145deg, rgba(13, 29, 48, 0.88), rgba(8, 19, 33, 0.83));
+            box-shadow: 0 18px 55px rgba(0, 8, 22, 0.38), 0 0 34px -16px rgba(59, 205, 255, 0.32);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+        }
+
+        @keyframes jc-holo-breathe {
+            0%, 100% { opacity: calc(0.78 * var(--jc-holo-intensity)); }
+            50% { opacity: calc(0.98 * var(--jc-holo-intensity)); }
+        }
+
+        @keyframes jc-hud-orbit {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes jc-grid-breathe {
+            0%, 100% { opacity: calc(0.19 * var(--jc-holo-intensity)); }
+            50% { opacity: calc(0.27 * var(--jc-holo-intensity)); }
         }
 
         /* -------- ambient states (CSS glow, independent of WebGL) -------- */
-        body:has(.ai-idle) #jarvis-avatar-wrap::before { opacity: 0.5; }
-        body:has(.ai-armed) #jarvis-avatar-wrap::before { opacity: 0.7; }
+        body:has(.ai-idle) #jarvis-avatar-wrap::before { opacity: calc(0.5 * var(--jc-holo-intensity)); }
+        body:has(.ai-armed) #jarvis-avatar-wrap::before { opacity: calc(0.7 * var(--jc-holo-intensity)); }
         body:has(.ai-listening) #jarvis-avatar-wrap::before {
-            opacity: 1;
+            opacity: var(--jc-holo-intensity);
             animation: jc-listen-pulse 1.2s ease-in-out infinite;
         }
         body:has(.ai-thinking) #jarvis-avatar-wrap::before {
-            opacity: 0.85;
+            opacity: calc(0.85 * var(--jc-holo-intensity));
             animation: jc-think-flicker 1.1s ease-in-out infinite;
         }
         body:has(.ai-speaking) #jarvis-avatar-wrap::before {
-            opacity: 1;
+            opacity: var(--jc-holo-intensity);
             animation: jc-speak-flicker 0.5s ease-in-out infinite;
         }
 
         @keyframes jc-listen-pulse {
-            0%, 100% { opacity: 0.7; }
-            50% { opacity: 1; }
+            0%, 100% { opacity: calc(0.7 * var(--jc-holo-intensity)); }
+            50% { opacity: var(--jc-holo-intensity); }
         }
 
         @keyframes jc-think-flicker {
-            0%, 100% { opacity: 0.55; }
-            50% { opacity: 0.9; }
+            0%, 100% { opacity: calc(0.55 * var(--jc-holo-intensity)); }
+            50% { opacity: calc(0.9 * var(--jc-holo-intensity)); }
         }
 
         @keyframes jc-speak-flicker {
-            0%, 100% { opacity: 0.8; }
-            50% { opacity: 1; }
+            0%, 100% { opacity: calc(0.8 * var(--jc-holo-intensity)); }
+            50% { opacity: var(--jc-holo-intensity); }
         }
 
         /* Voice activity bars: live only while listening or speaking */
@@ -549,6 +677,8 @@
             body:has(.ai-listening) #jarvis-avatar-wrap::before,
             body:has(.ai-thinking) #jarvis-avatar-wrap::before,
             body:has(.ai-speaking) #jarvis-avatar-wrap::before,
+            #jarvis-avatar-wrap::after,
+            #jc-grid-bg,
             .ai-listening .jc-wave span,
             .ai-speaking .jc-wave span,
             .ai-thinking .jc-wave span,
@@ -557,20 +687,6 @@
             }
         }
 
-        .jc-new-imap-encryption,
-        .jc-new-smtp-encryption {
-            color-scheme: dark;
-        }
-
-        .jc-new-imap-encryption option,
-        .jc-new-smtp-encryption option {
-            background-color: #111827;
-            color: #ffffff;
-        }
-
-        @media (max-width: 640px) {
-            #jc-grid-bg { display: none; }
-        }
     </style>
     <style>
     /* State colour: the halo, iris rim and pulses all follow this one variable */
@@ -757,33 +873,110 @@
     #jc-avatar-portrait .jc-face-highlight { opacity: .7; }
 </style>
 <style>
-    /* Realistic tone: brows follow the hair colour */
-    #jc-avatar-portrait .jc-brow { stroke: #6d7883; }
-</style>
-<style>
-    /* Cyber android: dark brows and a cool cyan bloom */
+    /* Cyber android: dark brows and a cool cyan bloom (overrides the realistic-tone brow colour) */
     #jc-avatar-portrait .jc-brow { stroke: #1b1511; }
     #jc-avatar-portrait .jc-avatar-head {
         filter: drop-shadow(0 0 16px rgba(70, 190, 255, 0.30))
                 drop-shadow(0 6px 14px rgba(0, 10, 25, 0.5));
     }
 </style>
+<style>
+    /* Keep the legacy SVG in the DOM for existing state animations; Three.js draws the visible avatar. */
+    #jc-avatar-portrait {
+        top: 0;
+        bottom: auto;
+        width: min(92vw, 78vh, 900px);
+        max-height: 100vh;
+        opacity: 1;
+        filter: drop-shadow(0 0 24px rgba(22, 160, 210, 0.18));
+    }
+    #jc-avatar-portrait > :not(defs):not(.jc-avatar-track) {
+        display: none !important;
+    }
+    #jc-avatar-portrait .jc-avatar-track {
+        transform-origin: 450px 660px;
+    }
+    #jc-avatar-portrait .jc-avatar-head {
+        display: none !important;
+    }
+    @media (max-width: 640px) {
+        #jc-avatar-portrait {
+            top: 0;
+            bottom: auto;
+            width: min(94vw, 78vh, 760px);
+            max-height: 100vh;
+            opacity: 1;
+        }
+    }
+</style>
+<style>
+    /* =====================================================================
+       SETTINGS DRAWER (shared form controls)
+       ===================================================================== */
+    .jc-label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.2em; color:rgba(255,255,255,.4); }
+    .jc-hint  { display:block; margin-top:4px; font-size:10px; line-height:1.5; color:rgba(255,255,255,.3); }
+    .jc-field {
+        margin-top:8px; width:100%; height:44px; border-radius:12px;
+        border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.03);
+        padding:0 12px; font-size:14px; color:#fff; outline:none;
+        transition:border-color .2s ease, box-shadow .2s ease;
+    }
+    textarea.jc-field { height:auto; padding:8px 12px; line-height:1.5; }
+    .jc-field::placeholder { color:rgba(255,255,255,.2); }
+    .jc-field:focus { border-color:rgba(255,255,255,.28); }
+    .jc-field.is-invalid { border-color:rgba(248,113,113,.65); box-shadow:0 0 0 3px rgba(248,113,113,.12); }
+    select.jc-field { color-scheme:dark; }
+    select.jc-field option { background:#111827; color:#fff; }
+
+    .jc-btn {
+        display:inline-flex; align-items:center; justify-content:center; gap:6px;
+        height:36px; padding:0 14px; border-radius:12px; font-size:12px; font-weight:500;
+        border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04);
+        color:rgba(255,255,255,.7); transition:background .2s ease, color .2s ease, opacity .2s ease;
+    }
+    .jc-btn:hover:not(:disabled) { background:rgba(255,255,255,.09); color:#fff; }
+    .jc-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .jc-btn-primary { background:rgba(52,211,153,.9); border-color:transparent; color:#04130d; }
+    .jc-btn-primary:hover:not(:disabled) { background:#34d399; color:#04130d; }
+    .jc-btn-danger { color:rgba(252,165,165,.8); }
+    .jc-btn-danger:hover:not(:disabled) { background:rgba(248,113,113,.12); color:#fca5a5; }
+    .jc-btn-sm { height:28px; padding:0 10px; font-size:10px; border-radius:8px; }
+
+    .jc-tab {
+        flex:1; padding:12px 8px; color:rgba(255,255,255,.4);
+        border-bottom:2px solid transparent; transition:color .2s ease, border-color .2s ease;
+    }
+    .jc-tab:hover { color:rgba(255,255,255,.75); }
+    .jc-tab[aria-selected="true"] { color:#fff; border-bottom-color:rgba(var(--jc-cyan), .7); }
+
+    .jc-notice { border-radius:10px; padding:8px 12px; font-size:11px; line-height:1.5; }
+    .jc-notice-warn { border:1px solid rgba(251,146,60,.25); background:rgba(251,146,60,.08); color:#fdba74; }
+    .jc-notice-ok   { border:1px solid rgba(52,211,153,.2);  background:rgba(52,211,153,.06); color:#6ee7b7; }
+    .jc-notice-err  { border:1px solid rgba(248,113,113,.2); background:rgba(248,113,113,.06); color:#fca5a5; }
+    .jc-notice-info { border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.03); color:rgba(255,255,255,.6); }
+
+    /* A closed drawer is out of the tab order and hidden from assistive tech */
+    #jc-settings-drawer { transition:transform .3s ease-out, visibility 0s linear .3s; }
+    #jc-settings-drawer[inert] { visibility:hidden; }
+    #jc-settings-drawer:not([inert]) { visibility:visible; transition-delay:0s; }
+</style>
 </head>
 
 <body>
 
-    <canvas id="jc-network-bg"></canvas>
     <div id="jc-grid-bg" aria-hidden="true"></div>
+    <canvas id="jc-network-bg" aria-hidden="true"></canvas>
 
-    {{-- Full-screen holographic portrait; state classes drive the face and listening gesture. --}}
+    {{-- Full-screen particle landscape; Three.js animates the flowing wave field. --}}
     <div id="jarvis-avatar-wrap" aria-hidden="true">
-        <svg id="jc-avatar-portrait" viewBox="0 0 900 860" role="presentation" focusable="false">
+        <canvas id="jc-avatar-3d"></canvas>
+        <svg id="jc-avatar-portrait" viewBox="0 0 900 1350" role="presentation" focusable="false">
             <defs>
-                <radialGradient id="jc-face-glass" cx="50%" cy="34%" r="76%">
-                    <stop offset="0"   stop-color="#f3ddd0" />
-                    <stop offset=".24" stop-color="#e2c1ac" />
-                    <stop offset=".58" stop-color="#bb9481" />
-                    <stop offset="1"   stop-color="#7d5f57" />
+                <radialGradient id="jc-face-glass" cx="46%" cy="32%" r="80%">
+                    <stop offset="0"   stop-color="#f6d9bd" />
+                    <stop offset=".24" stop-color="#dfc9bc" />
+                    <stop offset=".58" stop-color="#a88f88" />
+                    <stop offset="1"   stop-color="#5f3524" />
                 </radialGradient>
                 <linearGradient id="jc-holo-stroke" x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0"   stop-color="#ffffff" />
@@ -812,11 +1005,11 @@
                     <stop offset="1" stop-color="#04152b" stop-opacity=".95" />
                 </linearGradient>
                 <linearGradient id="jc-face-highlight" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0"   stop-color="#7fd4ff" stop-opacity=".4" />
-                    <stop offset=".22" stop-color="#ffffff" stop-opacity="0" />
-                    <stop offset=".5"  stop-color="#fffaf4" stop-opacity=".14" />
-                    <stop offset=".78" stop-color="#ffffff" stop-opacity="0" />
-                    <stop offset="1"   stop-color="#7fd4ff" stop-opacity=".4" />
+                    <stop offset="0"   stop-color="#ff8a35" stop-opacity=".3" />
+                    <stop offset=".16" stop-color="#ffb15a" stop-opacity=".1" />
+                    <stop offset=".43" stop-color="#fffaf4" stop-opacity=".08" />
+                    <stop offset=".7"  stop-color="#55eaff" stop-opacity=".09" />
+                    <stop offset="1"   stop-color="#28cfff" stop-opacity=".3" />
                 </linearGradient>
                 <pattern id="jc-holo-scanlines" width="5" height="8" patternUnits="userSpaceOnUse">
                     <path d="M0 1 H5" stroke="#d7ffff" stroke-opacity=".22" stroke-width=".7" />
@@ -918,7 +1111,7 @@
                 </linearGradient>
         
                 <clipPath id="jc-face-clip">
-                    <path d="M450 92 C384 92 342 140 340 214 C339 250 340 282 348 314 C358 352 388 392 428 418 C438 424 444 427 450 427 C456 427 462 424 472 418 C512 392 542 352 552 314 C560 282 561 250 560 214 C558 140 516 92 450 92Z" />
+                    <path d="M450 88 C392 88 352 126 345 188 C341 224 341 260 348 292 C355 326 370 355 391 378 C407 396 427 411 441 419 C445 422 448 424 450 425 C452 424 455 422 459 419 C473 411 493 396 509 378 C530 355 545 326 552 292 C559 260 559 224 555 188 C548 126 508 88 450 88Z" />
                 </clipPath>
                 <clipPath id="jc-eye-l-clip"><path d="M365 267 Q390 250 417 266 Q395 286 365 267Z" /></clipPath>
                 <clipPath id="jc-eye-r-clip"><path d="M483 266 Q510 250 535 267 Q505 286 483 266Z" /></clipPath>
@@ -1039,13 +1232,13 @@
                     <circle cx="574" cy="283" r="2.2" stroke="none" style="fill:rgb(var(--jc-accent))" />
 
                     {{-- Face --}}
-                    <path d="M450 92 C384 92 342 140 340 214 C339 250 340 282 348 314 C358 352 388 392 428 418 C438 424 444 427 450 427 C456 427 462 424 472 418 C512 392 542 352 552 314 C560 282 561 250 560 214 C558 140 516 92 450 92Z" fill="url(#jc-face-glass)" stroke-width="2.4" />
+                    <path d="M450 88 C392 88 352 126 345 188 C341 224 341 260 348 292 C355 326 370 355 391 378 C407 396 427 411 441 419 C445 422 448 424 450 425 C452 424 455 422 459 419 C473 411 493 396 509 378 C530 355 545 326 552 292 C559 260 559 224 555 188 C548 126 508 88 450 88Z" fill="url(#jc-face-glass)" stroke-width="2.4" />
                     <g clip-path="url(#jc-face-clip)" fill="none" stroke="#724a33" stroke-width="1" opacity=".1">
                         <path d="M318 157 L375 190 L450 140 L525 190 L582 157 M314 217 L375 235 L450 202 L525 235 L586 217 M315 278 L371 266 L450 302 L529 266 L585 278 M329 338 L392 316 L450 352 L508 316 L571 338 M360 382 L414 367 L450 398 L486 367 L540 382" />
                         <path d="M375 190 L375 235 L371 266 L392 316 L414 367 M450 140 L450 202 L450 302 L450 352 L450 398 M525 190 L525 235 L529 266 L508 316 L486 367 M318 157 L314 217 L315 278 L329 338 L360 382 M582 157 L586 217 L585 278 L571 338 L540 382" />
                         <path d="M331 186 Q450 229 569 186 M325 304 Q450 346 575 304" opacity=".55" />
                     </g>
-                    <path d="M450 92 C384 92 342 140 340 214 C339 250 340 282 348 314 C358 352 388 392 428 418 C438 424 444 427 450 427 C456 427 462 424 472 418 C512 392 542 352 552 314 C560 282 561 250 560 214 C558 140 516 92 450 92Z" fill="url(#jc-face-highlight)" class="jc-face-highlight" stroke="none" />
+                    <path d="M450 88 C392 88 352 126 345 188 C341 224 341 260 348 292 C355 326 370 355 391 378 C407 396 427 411 441 419 C445 422 448 424 450 425 C452 424 455 422 459 419 C473 411 493 396 509 378 C530 355 545 326 552 292 C559 260 559 224 555 188 C548 126 508 88 450 88Z" fill="url(#jc-face-highlight)" class="jc-face-highlight" stroke="none" />
                     <rect x="315" y="90" width="270" height="340" clip-path="url(#jc-face-clip)" fill="url(#jc-holo-scanlines)" opacity=".07" />
 
                     <rect x="315" y="90" width="270" height="340" clip-path="url(#jc-face-clip)" fill="url(#jc-brushed)" style="mix-blend-mode:soft-light" opacity=".22" />
@@ -1139,6 +1332,27 @@
                         </g>
                     </g>
 
+                    {{-- Split-spectrum cybernetic detail: amber left rim, cyan right-side circuitry --}}
+                    <g id="jc-face-cyber-etch" clip-path="url(#jc-face-clip)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M350 226 V254 L359 263 V288 L371 300 V321 L384 334" stroke="#ff7a2f" stroke-width="7" stroke-opacity=".08" />
+                        <path d="M350 226 V254 L359 263 V288 L371 300 V321 L384 334" stroke="#ff9a45" stroke-width="1.25" stroke-opacity=".82" />
+                        <path d="M356 236 H370 L378 244 V260 M362 294 H382 L392 304 V322 L405 335" stroke="#ffb15a" stroke-width="1" stroke-opacity=".68" />
+                        <path d="M544 218 V242 L536 250 V278 L526 288 V309 L514 321 V342 L497 356" stroke="#36dfff" stroke-width="7" stroke-opacity=".1" />
+                        <path d="M544 218 V242 L536 250 V278 L526 288 V309 L514 321 V342 L497 356" stroke="#56e9ff" stroke-width="1.35" stroke-opacity=".92" />
+                        <path d="M538 232 H526 L518 240 V258 L508 268 V286 H494 L486 294 V310" stroke="#35d7ff" stroke-width="1.1" stroke-opacity=".82" />
+                        <path d="M530 294 H516 L507 303 V318 H491 L482 327 V346 L470 358" stroke="#9af5ff" stroke-width="1" stroke-opacity=".72" />
+                        <path d="M535 262 H520 L514 268 M520 309 H532 M492 338 H506" stroke="#31cfff" stroke-width=".9" stroke-opacity=".72" />
+                        <g stroke="none">
+                            <circle cx="359" cy="263" r="2.1" fill="#ffb15a" />
+                            <circle cx="371" cy="300" r="2" fill="#ff8c3c" />
+                            <circle cx="382" cy="260" r="1.6" fill="#ffd19a" />
+                            <circle cx="536" cy="250" r="2" fill="#8af4ff" />
+                            <circle cx="526" cy="288" r="2.1" fill="#35dfff" />
+                            <circle cx="514" cy="321" r="2" fill="#b5faff" />
+                            <circle cx="491" cy="346" r="1.7" fill="#35dfff" />
+                        </g>
+                    </g>
+
                     {{-- Hair, front layer: swept fringe with light strands --}}
                     <g class="jc-hair-front">
                         <path d="M338 236 C328 150 384 96 450 92 C516 96 572 150 562 236 C556 190 520 134 450 128 C380 134 344 190 338 236Z" fill="url(#jc-hair)" fill-opacity=".9" stroke-opacity=".55" stroke-width="1.6" />
@@ -1168,7 +1382,7 @@
                                 <circle class="jc-iris-rim" cx="391" cy="267" r="11" fill="none" stroke-width="1.4" />
                                 <circle cx="391" cy="267" r="7.6" fill="none" stroke="#c9f6ff" stroke-opacity=".75" stroke-width=".7" stroke-dasharray="1.2 1.6" />
                                 <circle class="jc-pupil" cx="391" cy="267" r="4.6" fill="#03152e" stroke="none" />
-                                <circle cx="394.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
+                                <circle cx="387.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
                             </g>
                         </g>
                         <g clip-path="url(#jc-eye-r-clip)">
@@ -1177,7 +1391,7 @@
                                 <circle class="jc-iris-rim" cx="509" cy="267" r="11" fill="none" stroke-width="1.4" />
                                 <circle cx="509" cy="267" r="7.6" fill="none" stroke="#c9f6ff" stroke-opacity=".75" stroke-width=".7" stroke-dasharray="1.2 1.6" />
                                 <circle class="jc-pupil" cx="509" cy="267" r="4.6" fill="#03152e" stroke="none" />
-                                <circle cx="512.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
+                                <circle cx="505.5" cy="263.5" r="2" fill="#ffffff" stroke="none" />
                             </g>
                         </g>
                         <path d="M363 268 Q390 246 419 265 M481 265 Q510 246 537 268" fill="none" stroke="#241611" stroke-opacity=".9" stroke-width="2.6" />
@@ -1264,7 +1478,7 @@
     </div>
     <div id="jc-scrim" aria-hidden="true"></div>
 
-    <div id="jc-app" class="flex h-screen w-full">
+    <div id="jc-app" class="flex h-screen w-full" data-test-mode="{{ config('jarvis.test_mode') ? 'true' : 'false' }}">
 
         {{-- Backdrop shown only while the inbox drawer is open --}}
         <div
@@ -1284,7 +1498,7 @@
 
                 <div>
                     <div class="jc-shimmer-text text-sm font-semibold tracking-[0.25em]" data-ai-name>
-                        JC
+                        {{ $aiName }}
                     </div>
 
                     <div class="mt-1 text-[10px] uppercase tracking-widest text-white/30">
@@ -1381,55 +1595,65 @@
 
         <aside
             id="jc-settings-drawer"
-            class="jc-glass-strong fixed inset-y-0 right-0 z-[60] flex w-[400px] max-w-full translate-x-full flex-col border-l border-white/10 transition-transform duration-300 ease-out"
+            class="jc-glass-strong fixed inset-y-0 right-0 z-[60] flex w-[420px] max-w-full translate-x-full flex-col border-l border-white/10"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="jc-settings-title"
             aria-hidden="true"
+            inert
         >
-            <div class="flex h-16 items-center justify-between border-b border-white/10 px-5">
+            <div class="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-5">
                 <div>
-                    <div class="jc-shimmer-text text-sm font-semibold tracking-[0.25em]" data-ai-name>JC</div>
-                    <div class="mt-1 text-[10px] uppercase tracking-widest text-white/30">Settings</div>
+                    <div class="jc-shimmer-text text-sm font-semibold tracking-[0.25em]" data-ai-name>{{ $aiName }}</div>
+                    <div id="jc-settings-title" class="mt-1 text-[10px] uppercase tracking-widest text-white/30">Settings</div>
                 </div>
                 <button type="button" id="jc-settings-close" aria-label="Close settings"
                     class="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-white/10 hover:text-white">✕</button>
             </div>
 
             {{-- Tabs --}}
-            <div class="flex border-b border-white/10 text-[10px] uppercase tracking-wider">
-                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white" data-tab="identity">Identity</button>
-                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="apikey">API Key</button>
-                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="scope">Scope</button>
-                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="workflow">Workflow</button>
-                <button type="button" class="jc-tab flex-1 px-2 py-3 text-white/40" data-tab="email">Email</button>
+            <div class="flex shrink-0 border-b border-white/10 text-[10px] uppercase tracking-wider" role="tablist" aria-label="Settings sections">
+                <button type="button" role="tab" id="jc-tab-identity" aria-controls="jc-panel-identity" aria-selected="true"  tabindex="0"  class="jc-tab" data-tab="identity">Identity</button>
+                <button type="button" role="tab" id="jc-tab-apikey"   aria-controls="jc-panel-apikey"   aria-selected="false" tabindex="-1" class="jc-tab" data-tab="apikey">API Key</button>
+                <button type="button" role="tab" id="jc-tab-scope"    aria-controls="jc-panel-scope"    aria-selected="false" tabindex="-1" class="jc-tab" data-tab="scope">Scope</button>
+                <button type="button" role="tab" id="jc-tab-workflow" aria-controls="jc-panel-workflow" aria-selected="false" tabindex="-1" class="jc-tab" data-tab="workflow">Workflow</button>
+                <button type="button" role="tab" id="jc-tab-email"    aria-controls="jc-panel-email"    aria-selected="false" tabindex="-1" class="jc-tab" data-tab="email">Email</button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-5 py-5">
 
                 {{-- IDENTITY --}}
-                <div class="jc-tab-panel space-y-4" data-panel="identity">
+                <div class="jc-tab-panel space-y-4" role="tabpanel" id="jc-panel-identity" aria-labelledby="jc-tab-identity" data-panel="identity">
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">AI name</span>
-                        <input id="jc-set-ai-name" type="text" maxlength="30" placeholder="JC"
-                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                        <span class="mt-1 block text-[10px] text-white/30">Also becomes the wake word, e.g. "Hello &lt;name&gt;".</span>
+                        <span class="jc-label">AI name</span>
+                        <input id="jc-set-ai-name" type="text" maxlength="30" placeholder="JC" class="jc-field">
+                        <span class="jc-hint">Say "Hello &lt;name&gt;" to listen, or "Wake up &lt;name&gt;" to check for important email alerts.</span>
                     </label>
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Owner's name</span>
-                        <input id="jc-set-owner-name" type="text" maxlength="60" placeholder="Your name"
-                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
+                        <span class="jc-label">Owner's name</span>
+                        <input id="jc-set-owner-name" type="text" maxlength="60" placeholder="Your name" class="jc-field">
+                    </label>
+                    <label class="block">
+                        <span class="jc-label">Saved memories</span>
+                        <textarea id="jc-set-learned-memory" rows="4" maxlength="4000" placeholder="One preference or fact per line" class="jc-field"></textarea>
+                        <span class="jc-hint"><span id="jc-memory-count">0</span>/4000 &middot; Ask your AI to remember something, or edit and clear notes here.</span>
+                    </label>
+                    <label class="block">
+                        <span class="jc-label">Wake name variants</span>
+                        <input id="jc-set-wake-variants" type="text" placeholder="Lyra, Lira" class="jc-field">
+                        <span class="jc-hint">Names speech recognition may hear instead. Separate variants with commas.</span>
                     </label>
                 </div>
 
                 {{-- API KEY --}}
-                <div class="jc-tab-panel hidden space-y-4" data-panel="apikey">
+                <div class="jc-tab-panel hidden space-y-4" role="tabpanel" id="jc-panel-apikey" aria-labelledby="jc-tab-apikey" data-panel="apikey">
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Anthropic API key</span>
-                        <div class="mt-2 flex gap-2">
-                            <input id="jc-set-api-key" type="password" autocomplete="off" placeholder="sk-ant-..."
-                                class="h-11 flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            <button type="button" id="jc-toggle-key"
-                                class="rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-white/50 hover:text-white">Show</button>
+                        <span class="jc-label">Anthropic API key</span>
+                        <div class="flex gap-2">
+                            <input id="jc-set-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-..." class="jc-field flex-1">
+                            <button type="button" id="jc-toggle-key" class="jc-btn mt-2 h-11" aria-label="Show or hide API key">Show</button>
                         </div>
-                        <span id="jc-key-status" class="mt-2 block text-[10px] text-white/30">No key saved.</span>
+                        <span id="jc-key-status" class="mt-2 block text-[10px] text-white/30" role="status">No key saved.</span>
                     </label>
                     <p class="text-[11px] leading-5 text-white/30">
                         The key is sent to your server and stored encrypted. It is never kept in the browser
@@ -1438,9 +1662,9 @@
                 </div>
 
                 {{-- SCOPE / LIMITS --}}
-                <div class="jc-tab-panel hidden space-y-5" data-panel="scope">
-                    <div>
-                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">What may the AI do?</div>
+                <div class="jc-tab-panel hidden space-y-5" role="tabpanel" id="jc-panel-scope" aria-labelledby="jc-tab-scope" data-panel="scope">
+                    <fieldset>
+                        <legend class="jc-label">What may the AI do?</legend>
                         <div class="mt-2 space-y-2 text-sm text-white/70">
                             <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="read_emails" checked> Read emails</label>
                             <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="search_emails" checked> Search emails</label>
@@ -1449,17 +1673,19 @@
                             <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="send_emails"> Send new emails</label>
                             <label class="flex items-center gap-2"><input type="checkbox" class="jc-scope-cb" value="analysis" checked> Analysis &amp; summaries</label>
                         </div>
-                    </div>
+                    </fieldset>
 
                     <label class="flex items-center gap-2 text-sm text-white/70">
                         <input type="checkbox" id="jc-set-confirm-send" checked>
                         Always ask me before sending anything
                     </label>
+                    <div id="jc-scope-warning" class="jc-notice jc-notice-warn hidden" role="alert">
+                        Sending is enabled and confirmation is off. JC will be able to send email without asking you first.
+                    </div>
 
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Tone</span>
-                        <select id="jc-set-tone"
-                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-[#0b0d10] px-3 text-sm text-white outline-none">
+                        <span class="jc-label">Tone</span>
+                        <select id="jc-set-tone" class="jc-field">
                             <option value="professional">Professional</option>
                             <option value="friendly">Friendly</option>
                             <option value="concise">Concise</option>
@@ -1468,181 +1694,163 @@
                     </label>
 
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Daily credit limit (0 = unlimited)</span>
-                        <input id="jc-set-credit-limit" type="number" min="0" step="1" value="0"
-                            class="mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none focus:border-white/25">
+                        <span class="jc-label">Capability Demonstrations</span>
+                        <select id="jc-set-capability-demonstrations" class="jc-field">
+                            <option value="ask_first">Ask First</option>
+                            <option value="automatic_safe_demo">Automatic Safe Demo</option>
+                            <option value="never_demo">Never Demo</option>
+                        </select>
+                        <span class="mt-1 block text-xs text-white/40">This controls live demonstrations using your data. Visual explanations stay available. Sending, deletion and other changes require a real request.</span>
                     </label>
 
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Scope of work</span>
-                        <textarea id="jc-set-scope" rows="3" placeholder="e.g. Handle warranty, invoice and IT support emails only."
-                            class="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25"></textarea>
+                        <span class="jc-label">Daily credit limit (0 = unlimited)</span>
+                        <input id="jc-set-credit-limit" type="number" min="0" step="1" inputmode="numeric" value="0" class="jc-field">
                     </label>
 
                     <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Limitations / never do</span>
-                        <textarea id="jc-set-limits" rows="3" placeholder="e.g. Never share pricing. Never delete emails. Escalate legal matters to me."
-                            class="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25"></textarea>
+                        <span class="jc-label">Scope of work</span>
+                        <textarea id="jc-set-scope" rows="3" placeholder="e.g. Handle warranty, invoice and IT support emails only." class="jc-field"></textarea>
+                    </label>
+
+                    <label class="block">
+                        <span class="jc-label">Limitations / never do</span>
+                        <textarea id="jc-set-limits" rows="3" placeholder="e.g. Never share pricing. Never delete emails. Escalate legal matters to me." class="jc-field"></textarea>
                     </label>
                 </div>
 
                 {{-- WORKFLOW --}}
-                <div class="jc-tab-panel hidden space-y-4" data-panel="workflow">
+                <div class="jc-tab-panel hidden space-y-4" role="tabpanel" id="jc-panel-workflow" aria-labelledby="jc-tab-workflow" data-panel="workflow">
+                    <a href="{{ route('jarvis.connections.index') }}" class="jc-btn">Connections · saved API authentication</a>
                     <p class="text-sm leading-6 text-white/50">
                         Build and manage the automations your AI runs (triggers, actions, schedules).
                     </p>
                     <a id="jc-workflow-link" href="{{ url('/jarvis/workflows') }}"
-                    class="flex h-11 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-sm font-medium text-cyan-300 transition hover:bg-cyan-400/20">
+                       class="flex h-11 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-sm font-medium text-cyan-300 transition hover:bg-cyan-400/20">
                         Open AI Automation Workflow
                     </a>
                 </div>
 
-                {{-- EMAIL (one mailbox per user) --}}
-                <div class="jc-tab-panel hidden space-y-4" data-panel="email">
+                {{-- EMAIL ACCOUNTS --}}
+                <div class="jc-tab-panel hidden space-y-4" role="tabpanel" id="jc-panel-email" aria-labelledby="jc-tab-email" data-panel="email">
 
-                    <div>
-                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Mailbox</div>
-                        <p class="mt-1 text-xs text-white/40">
-                            Register the mailbox JC uses to read and send email. The email address is also used
-                            as the IMAP and SMTP username.
-                        </p>
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Email accounts</h3>
+                            <p class="mt-1 text-xs text-white/40">Mailboxes JC can use for email automation.</p>
+                        </div>
+                        <button type="button" id="jc-email-add" class="jc-btn jc-btn-sm shrink-0">+ Add account</button>
                     </div>
 
-                    {{-- Registered mailbox summary --}}
-                    <div id="jc-active-mailbox-card" class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Registered mailbox</div>
-
-                        {{-- Shown when no email is registered --}}
-                        <div id="jc-am-empty" class="mt-2">
-                            <div class="text-sm text-white/70">No email registered yet.</div>
-                            <button type="button" id="jc-am-add"
-                                class="mt-3 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs text-white transition hover:bg-white/[0.08]">
-                                + Add Email
-                            </button>
-                        </div>
-
-                        {{-- Shown when an email is registered --}}
-                        <div id="jc-am-registered" class="mt-2 hidden">
-                            <div class="flex items-start justify-between gap-3">
-                                <div id="jc-am-address" class="min-w-0 truncate text-sm font-medium text-white"></div>
-                                <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                                    <span class="rounded-full bg-emerald-400/10 px-2 py-1 text-[9px] uppercase tracking-wider text-emerald-300">✓ Active</span>
-                                    <span class="rounded-full bg-white/5 px-2 py-1 text-[9px] uppercase tracking-wider text-white/50">★ Default</span>
-                                </div>
-                            </div>
-
-                            <div class="mt-3 grid grid-cols-2 gap-2">
-                                <div class="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                                    <div class="text-[9px] uppercase tracking-wider text-white/30">IMAP</div>
-                                    <div id="jc-am-imap" class="mt-1 truncate text-xs text-white/60">-</div>
-                                </div>
-                                <div class="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                                    <div class="text-[9px] uppercase tracking-wider text-white/30">SMTP</div>
-                                    <div id="jc-am-smtp" class="mt-1 truncate text-xs text-white/60">-</div>
-                                </div>
-                            </div>
-
-                            <div class="mt-3 text-[10px] text-white/30">Password: <span id="jc-am-pw">••••••••</span></div>
-
-                            <div id="jc-am-warning" class="mt-3 hidden rounded-lg border border-white/10 bg-white/[0.02] p-2 text-[10px] leading-4 text-orange-400"></div>
-
-                            <div class="mt-3 flex items-center gap-2">
-                                <button type="button" id="jc-am-change"
-                                    class="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70 transition hover:bg-white/[0.08] hover:text-white">
-                                    Change
-                                </button>
-                                <button type="button" id="jc-am-remove"
-                                    class="flex-1 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-xs text-red-300 transition hover:bg-red-400/10">
-                                    Remove
-                                </button>
-                            </div>
-                        </div>
+                    <div id="jc-email-accounts-list" class="space-y-3" aria-live="polite">
+                        <div class="py-6 text-center text-xs text-white/30">Loading email accounts...</div>
                     </div>
 
-                    {{-- Add / change form (hidden until "Add Email" or "Change" is pressed) --}}
-                    <div id="jc-mailbox-form" class="hidden space-y-4">
+                    {{-- Add / Edit form --}}
+                    <div id="jc-email-account-form" class="hidden space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                        <input type="hidden" id="jc-email-id" value="">
 
-                    <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Email address</span>
-                        <input id="jc-set-email-address" type="email" autocomplete="off" placeholder="you@yourdomain.com"
-                            class="mt-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                    </label>
-
-                    <label class="block">
-                        <span class="text-[10px] uppercase tracking-[0.2em] text-white/30">Mailbox password</span>
-                        <div class="mt-2 flex gap-2">
-                            <input id="jc-set-email-password" type="password" autocomplete="new-password" placeholder="••••••••"
-                                class="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            <button type="button" id="jc-toggle-email-pw"
-                                class="rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-white/50 hover:text-white">Show</button>
+                        <div>
+                            <h4 id="jc-email-form-title" class="text-sm font-semibold text-white">Add email account</h4>
+                            <p class="mt-1 text-xs text-white/40">Configure the mailbox JC will use.</p>
                         </div>
-                        <span id="jc-email-pw-status" class="mt-2 block text-[10px] text-white/30">No password saved.</span>
-                    </label>
 
-                    <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Incoming (IMAP)</div>
-                        <div class="grid grid-cols-3 gap-2">
-                            <label class="col-span-2 block">
-                                <span class="text-[9px] uppercase text-white/40">Host</span>
-                                <input id="jc-set-imap-host" type="text" placeholder="imap.secureserver.net"
-                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            </label>
-                            <label class="block">
-                                <span class="text-[9px] uppercase text-white/40">Port</span>
-                                <input id="jc-set-imap-port" type="number" min="1" max="65535" placeholder="993"
-                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            </label>
-                        </div>
                         <label class="block">
-                            <span class="text-[9px] uppercase text-white/40">Encryption</span>
-                            <select id="jc-set-imap-encryption" class="jc-new-imap-encryption mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none focus:border-white/25">
-                                <option value="ssl">SSL/TLS</option>
-                                <option value="tls">STARTTLS</option>
-                                <option value="none">None</option>
-                            </select>
+                            <span class="jc-label">Account name</span>
+                            <input type="text" id="jc-email-name" class="jc-field" placeholder="e.g. Support inbox" maxlength="80">
                         </label>
-                    </div>
 
-                    <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                        <div class="text-[10px] uppercase tracking-[0.2em] text-white/30">Outgoing (SMTP)</div>
-                        <div class="grid grid-cols-3 gap-2">
-                            <label class="col-span-2 block">
-                                <span class="text-[9px] uppercase text-white/40">Host</span>
-                                <input id="jc-set-smtp-host" type="text" placeholder="smtpout.secureserver.net"
-                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            </label>
-                            <label class="block">
-                                <span class="text-[9px] uppercase text-white/40">Port</span>
-                                <input id="jc-set-smtp-port" type="number" min="1" max="65535" placeholder="465"
-                                    class="mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25">
-                            </label>
-                        </div>
                         <label class="block">
-                            <span class="text-[9px] uppercase text-white/40">Encryption</span>
-                            <select id="jc-set-smtp-encryption" class="jc-new-smtp-encryption mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none focus:border-white/25">
-                                <option value="ssl">SSL/TLS</option>
-                                <option value="tls">STARTTLS</option>
-                                <option value="none">None</option>
+                            <span class="jc-label">Provider preset</span>
+                            <select id="jc-email-provider" class="jc-field">
+                                <option value="godaddy">GoDaddy</option>
+                                <option value="microsoft365">Microsoft 365</option>
+                                <option value="gmail">Gmail / Google Workspace</option>
+                                <option value="custom">Custom server</option>
                             </select>
+                            <span id="jc-email-provider-hint" class="jc-hint"></span>
                         </label>
-                    </div>
 
-                    <p class="text-[11px] leading-5 text-white/30">
-                        The password is sent to your server and stored encrypted. It is never shown again.
-                        Leave it blank to keep the current one. Press <span class="text-white/50">Save settings</span> below to apply.
-                    </p>
+                        <label class="block">
+                            <span class="jc-label">Email address</span>
+                            <input type="email" id="jc-email-address" class="jc-field" placeholder="name@company.com" autocomplete="off">
+                        </label>
 
-                    <button type="button" id="jc-am-cancel"
-                        class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-white/60 transition hover:bg-white/[0.08] hover:text-white">
-                        Cancel
-                    </button>
+                        <label class="block">
+                            <span class="jc-label">Mailbox password</span>
+                            <div class="flex gap-2">
+                                <input type="password" id="jc-email-password" class="jc-field flex-1" placeholder="Mailbox password" autocomplete="new-password">
+                                <button type="button" id="jc-email-pw-toggle" class="jc-btn mt-2 h-11" aria-label="Show or hide mailbox password">Show</button>
+                            </div>
+                            <span id="jc-email-pw-hint" class="jc-hint">The password is encrypted before being stored.</span>
+                        </label>
+
+                        <fieldset class="border-t border-white/10 pt-4">
+                            <legend class="mb-3 text-xs font-semibold text-white">IMAP: incoming mail</legend>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <label class="block sm:col-span-3">
+                                    <span class="jc-label">Host</span>
+                                    <input type="text" id="jc-email-imap-host" class="jc-field" placeholder="imap.secureserver.net" autocomplete="off">
+                                </label>
+                                <label class="block">
+                                    <span class="jc-label">Port</span>
+                                    <input type="number" id="jc-email-imap-port" class="jc-field" value="993" min="1" max="65535">
+                                </label>
+                                <label class="block sm:col-span-2">
+                                    <span class="jc-label">Encryption</span>
+                                    <select id="jc-email-imap-encryption" class="jc-field">
+                                        <option value="ssl">SSL</option>
+                                        <option value="tls">TLS</option>
+                                        <option value="none">None</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+
+                        <fieldset class="border-t border-white/10 pt-4">
+                            <legend class="mb-3 text-xs font-semibold text-white">SMTP: outgoing mail</legend>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <label class="block sm:col-span-3">
+                                    <span class="jc-label">Host</span>
+                                    <input type="text" id="jc-email-smtp-host" class="jc-field" placeholder="smtpout.secureserver.net" autocomplete="off">
+                                </label>
+                                <label class="block">
+                                    <span class="jc-label">Port</span>
+                                    <input type="number" id="jc-email-smtp-port" class="jc-field" value="465" min="1" max="65535">
+                                </label>
+                                <label class="block sm:col-span-2">
+                                    <span class="jc-label">Encryption</span>
+                                    <select id="jc-email-smtp-encryption" class="jc-field">
+                                        <option value="ssl">SSL</option>
+                                        <option value="tls">TLS</option>
+                                        <option value="none">None</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div id="jc-email-enc-warning" class="jc-notice jc-notice-warn mt-3 hidden" role="alert">
+                                Encryption is off for at least one server. Your password will be sent in plain text.
+                            </div>
+                        </fieldset>
+
+                        <div class="flex flex-wrap gap-4 text-xs text-white/70">
+                            <label class="inline-flex items-center gap-2"><input type="checkbox" id="jc-email-active" checked> Active</label>
+                            <label class="inline-flex items-center gap-2"><input type="checkbox" id="jc-email-default"> Default account</label>
+                        </div>
+
+                        <div id="jc-email-test-result" class="hidden" role="status"></div>
+
+                        <div class="flex flex-wrap gap-2 pt-1">
+                            <button type="button" id="jc-email-test" class="jc-btn">Test connection</button>
+                            <button type="button" id="jc-email-save" class="jc-btn jc-btn-primary">Save account</button>
+                            <button type="button" id="jc-email-cancel" class="jc-btn border-transparent bg-transparent">Cancel</button>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="flex items-center justify-between border-t border-white/10 px-5 py-4">
-                <span id="jc-settings-status" class="text-[11px] text-white/40"></span>
-                <button type="button" id="jc-settings-save"
-                    class="rounded-xl bg-emerald-400/90 px-5 py-2 text-xs font-medium text-black transition hover:bg-emerald-400">Save settings</button>
+
+            <div class="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 px-5 py-4">
+                <span id="jc-settings-status" class="min-w-0 flex-1 truncate text-[11px] text-white/40" role="status" aria-live="polite"></span>
+                <button type="button" id="jc-settings-save" class="jc-btn jc-btn-primary px-5">Save settings</button>
             </div>
         </aside>
 
@@ -1666,6 +1874,9 @@
                     <div class="hidden text-xs uppercase tracking-[0.25em] text-white/45 md:block">
                         Personal assistant
                     </div>
+                    @if (config('jarvis.test_mode'))
+                        <span class="jc-demo-mode-badge">Development / Test Mode</span>
+                    @endif
                 </div>
 
                 <div class="flex items-center gap-2 sm:gap-4">
@@ -1716,6 +1927,17 @@
                     <div class="hidden rounded-full border border-cyan-300/10 bg-cyan-300/[0.04] px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-cyan-100/45 lg:block">
                         Voice + chat
                     </div>
+                    <button
+                        type="button"
+                        id="jc-avatar-vrm-open"
+                        aria-label="Load a 3D VRM avatar"
+                        title="Load a 3D VRM avatar"
+                        class="rounded-full border border-cyan-200/20 bg-cyan-200/[.06] px-3 py-1.5 text-[9px] uppercase tracking-wider text-cyan-100/75 transition hover:bg-cyan-200/[.12] hover:text-cyan-50"
+                    >
+                        <span id="jc-avatar-vrm-button-text">Load VRM</span>
+                    </button>
+                    <input id="jc-avatar-vrm-file" type="file" accept=".vrm,model/gltf-binary" class="hidden" aria-label="Choose a VRM avatar file">
+                    <span id="jc-avatar-vrm-status" class="hidden max-w-36 truncate text-[9px] text-cyan-100/55" role="status" aria-live="polite"></span>
 
                 </div>
 
@@ -1723,7 +1945,7 @@
 
 
             {{-- Center --}}
-            <section class="flex flex-1 flex-col items-center justify-end overflow-y-auto px-4 pb-6 pt-4 sm:px-8">
+            <section id="jc-workspace-stage" class="flex flex-1 flex-col items-center justify-end overflow-y-auto px-4 pb-6 pt-4 sm:px-8">
 
                 <div class="flex w-full max-w-3xl flex-col">
 
@@ -1734,7 +1956,7 @@
                             class="jc-shimmer-text text-3xl font-light tracking-[0.2em] sm:text-4xl"
                             data-ai-name
                         >
-                            JC
+                            {{ $aiName }}
                         </h1>
 
                         
@@ -1767,17 +1989,17 @@
                             <input
                                 id="jarvis-input"
                                 type="text"
-                                placeholder="Message JC..."
+                                placeholder="Ask {{ $aiName }} anything..."
                                 autocomplete="off"
                                 class="h-12 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-white/35 sm:h-14 sm:text-base"
-                                aria-label="Message JC"
+                                aria-label="Ask {{ $aiName }} anything"
                             >
 
                             <button
                                 type="button"
                                 id="jarvis-wake-toggle"
                                 class="flex h-12 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-medium text-white/60 transition hover:border-emerald-300/25 hover:bg-emerald-300/[0.06] hover:text-emerald-100 sm:h-14 sm:px-4"
-                                title='Enable always-listening for "Hello JC"'
+                                title='Enable always-listening for "Hello {{ $aiName }}"'
                                 aria-pressed="false"
                             >
                                 <span id="jarvis-wake-dot" class="h-1.5 w-1.5 rounded-full bg-white/20"></span>
@@ -1797,7 +2019,7 @@
                         </div>
 
                         <div class="flex items-center justify-between gap-3 px-3 pb-1 pt-2">
-                            <span class="text-[10px] text-white/35">Chat naturally, or ask JC to help.</span>
+                            <span class="text-[10px] text-white/35">Ask, analyze, automate, or take action.</span>
                             <span class="hidden text-[9px] uppercase tracking-wider text-white/25 sm:inline">Enter to send</span>
                         </div>
 
@@ -1806,25 +2028,26 @@
                     {{-- Console: text reply and/or email view --}}
                     <div
                         id="jarvis-result"
-                        class="jc-glass-strong fixed right-4 top-20 z-20 hidden max-h-[calc(100vh_-_6rem)] w-[calc(100vw_-_2rem)] max-w-lg overflow-y-auto rounded-2xl border border-cyan-200/10 bg-slate-950/65 p-5 shadow-2xl sm:p-6"
+                        class="jc-glass-strong jc-conversation-panel fixed right-4 top-20 z-20 hidden max-h-[calc(100vh_-_6rem)] w-[calc(100vw_-_2rem)] max-w-lg overflow-y-auto rounded-2xl border border-cyan-200/10 bg-slate-950/65 p-5 shadow-2xl sm:p-6"
                         role="region"
-                        aria-live="assertive"
-                        aria-label="JC Response"
+                        aria-live="polite"
+                        aria-busy="false"
+                        aria-label="{{ $aiName }} Response"
                     >
 
                         <div class="mb-3 flex items-center justify-between">
 
                             <div class="flex items-center gap-2">
                                 <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-                                <span id="jarvis-result-label" class="text-[10px] uppercase tracking-[0.25em] text-white/30">
-                                    JC Response
+                                <span id="jarvis-result-label" data-ai-name class="text-xs font-medium tracking-wide text-cyan-100/80">
+                                    {{ $aiName }}
                                 </span>
                             </div>
 
                             <button
                                 type="button"
                                 id="jarvis-result-close"
-                                class="hidden text-[10px] uppercase tracking-widest text-white/30 transition hover:text-white/70"
+                                class="text-[10px] uppercase tracking-widest text-white/30 transition hover:text-white/70"
                                 aria-label="Close response"
                             >
                                 Close
@@ -1834,7 +2057,7 @@
 
                         <div
                             id="jarvis-response"
-                            class="text-sm leading-7 text-white/70"
+                            class="text-sm leading-6 text-white/80"
                         ></div>
                         <div id="jarvis-email-results" class="mt-4 hidden space-y-2"></div>
 
@@ -1870,7 +2093,7 @@
                                 <textarea
                                     id="jarvis-reply-text"
                                     rows="4"
-                                    placeholder='Type your reply, or say "proceed" and JC will draft one'
+                                    placeholder='Type your reply, or say "proceed" and {{ $aiName }} will draft one'
                                     class="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/20"
                                     aria-label="Email reply"
                                 ></textarea>
@@ -1882,7 +2105,7 @@
                                         id="jarvis-draft-btn"
                                         class="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-white/60 transition hover:bg-white/[0.08] hover:text-white"
                                     >
-                                        Ask JC to draft
+                                        Ask {{ $aiName }} to draft
                                     </button>
 
                                     <button
@@ -1909,21 +2132,21 @@
                         </div>
 
                         <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                            <button type="button" data-prompt="How are you?" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
-                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Chat</span>
-                                <span class="text-xs text-white/75 transition group-hover:text-white">How are you?</span>
+                            <button type="button" data-prompt="Compare all active projects" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Operations</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Compare all active projects</span>
                             </button>
-                            <button type="button" data-prompt="Tell me something interesting" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
-                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Chat</span>
-                                <span class="text-xs text-white/75 transition group-hover:text-white">Tell me something interesting</span>
+                            <button type="button" data-prompt="Show project delivery progress" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-cyan-100/45">Report</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Show project delivery progress</span>
                             </button>
-                            <button type="button" data-prompt="Check my latest email" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                            <button type="button" data-prompt="Check important emails" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
                                 <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-violet-100/45">Email</span>
-                                <span class="text-xs text-white/75 transition group-hover:text-white">Check my latest email</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Check important emails</span>
                             </button>
-                            <button type="button" data-prompt="Find warranty emails" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
-                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-violet-100/45">Email</span>
-                                <span class="text-xs text-white/75 transition group-hover:text-white">Find warranty emails</span>
+                            <button type="button" data-prompt="Show my workflows" class="jarvis-suggestion group rounded-xl border border-white/[0.09] bg-slate-950/35 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-cyan-200/[0.06] focus-visible:outline-cyan-200">
+                                <span class="mb-2 block text-[9px] uppercase tracking-[0.16em] text-violet-100/45">Automation</span>
+                                <span class="text-xs text-white/75 transition group-hover:text-white">Show my workflows</span>
                             </button>
                         </div>
                     </div>
@@ -1931,6 +2154,25 @@
                 </div>
 
             </section>
+
+            <aside id="jc-workspace" hidden aria-label="JARVIS workspace">
+                <div data-workspace-splitter role="separator" aria-label="Resize workspace" aria-orientation="vertical" tabindex="0"></div>
+                <header class="jc-workspace-header">
+                    <div>
+                        <p class="jc-workspace-kicker">JARVIS / WORKSPACE</p>
+                        <h2>Active results <span id="jc-workspace-count">0</span></h2>
+                    </div>
+                    <div class="jc-workspace-header-actions">
+                        <button type="button" data-workspace-action="conversation" class="jc-workspace-control">Conversation</button>
+                        <button type="button" data-workspace-action="collapse" class="jc-workspace-control" aria-label="Collapse workspace">−</button>
+                        <button type="button" data-workspace-action="close-all" class="jc-workspace-control" aria-label="Close all artifacts">×</button>
+                    </div>
+                </header>
+                <div id="jc-workspace-minimized" class="jc-workspace-minimized" aria-label="Minimized artifacts"></div>
+                <div id="jc-workspace-artifacts" class="jc-workspace-artifacts" aria-live="polite"></div>
+            </aside>
+
+            <button type="button" id="jc-mobile-workspace-toggle" class="jc-mobile-workspace-toggle" aria-label="Open JARVIS workspace">Workspace</button>
 
 
             {{-- Bottom Status --}}
@@ -1955,6 +2197,8 @@
      ===================================================================== --}}
 <script>
 (function () {
+    window.jcAiName = @js($aiName);
+
     // =====================================================================
     // CONFIGURATION & DEBUG UTILITIES
     // =====================================================================
@@ -2033,19 +2277,78 @@
     // VOICE CONFIGURATION
     // =====================================================================
 
-    function buildWakePhrases(name) {
-        const n = name.toLowerCase().trim();
-        return ['hello ' + n, 'hey ' + n, 'ok ' + n, 'okay ' + n];
+    function normalizeWakeText(text) {
+        return text
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .trim()
+            .replace(/\s+/g, ' ');
     }
 
-    let WAKE_PHRASES = buildWakePhrases(localStorage.getItem('jc_ai_name') || 'JC');
+    function buildWakePhrases(name, variants = []) {
+        const names = [name, ...variants]
+            .map((value) => normalizeWakeText(value))
+            .filter(Boolean);
+        const uniqueNames = [...new Set(names.length ? names : ['jc'])];
 
-    window.jcSetWakeName = function (name) {
-        WAKE_PHRASES = buildWakePhrases(name);
+        return [...new Set(uniqueNames.flatMap((n) => [
+            'hello ' + n,
+            'hey ' + n,
+            'ok ' + n,
+            'okay ' + n,
+            'wake up ' + n,
+        ]))];
+    }
+
+    function matchesWakeNameWord(spoken, configured) {
+        if (spoken === configured) return true;
+        if (configured.length < 4 || Math.abs(spoken.length - configured.length) > 1) return false;
+
+        let spokenIndex = 0;
+        let configuredIndex = 0;
+        let differences = 0;
+
+        while (spokenIndex < spoken.length && configuredIndex < configured.length) {
+            if (spoken[spokenIndex] === configured[configuredIndex]) {
+                spokenIndex++;
+                configuredIndex++;
+                continue;
+            }
+
+            differences++;
+            if (differences > 1) return false;
+
+            if (spoken.length > configured.length) {
+                spokenIndex++;
+            } else if (configured.length > spoken.length) {
+                configuredIndex++;
+            } else {
+                spokenIndex++;
+                configuredIndex++;
+            }
+        }
+
+        return differences + (spoken.length - spokenIndex) + (configured.length - configuredIndex) <= 1;
+    }
+
+    let storedWakeNameVariants = [];
+    try {
+        storedWakeNameVariants = JSON.parse(localStorage.getItem('jc_wake_name_variants') || '[]');
+        if (!Array.isArray(storedWakeNameVariants)) storedWakeNameVariants = [];
+    } catch (error) {
+        storedWakeNameVariants = [];
+    }
+
+    let WAKE_PHRASES = buildWakePhrases(window.jcAiName, storedWakeNameVariants);
+
+    window.jcSetWakeName = function (name, variants = []) {
+        storedWakeNameVariants = Array.isArray(variants) ? variants : [];
+        WAKE_PHRASES = buildWakePhrases(name, storedWakeNameVariants);
+        localStorage.setItem('jc_wake_name_variants', JSON.stringify(storedWakeNameVariants));
         debugLog('VOICE', 'Wake phrases updated', WAKE_PHRASES);
     };
-
-    const PROCEED_PHRASES = ['proceed', 'go ahead', 'draft it', 'draft a reply'];
 
     const STOP_PHRASES = [
         'stop', 'pause', 'cancel', 'stop it', 'pause it', 'cancel it',
@@ -2076,8 +2379,6 @@
     let activeCommandController = null;
     let currentEmail = null;
     let draftPending = false;
-    let knownUnreadEmailUids = new Set();
-    let unreadEmailInitialized = false;
     let emailCheckInFlight = false;
 
     let conversationId = localStorage.getItem('jc_conversation_id');
@@ -2132,7 +2433,8 @@
             if (
                 data.success &&
                 data.credit &&
-                data.credit.jarvis_php_balance !== undefined
+                data.credit.jarvis_php_balance !== undefined &&
+                data.credit.jarvis_php_balance !== null
             ) {
                 updateCreditDisplay(
                     data.credit.jarvis_php_balance
@@ -2140,7 +2442,7 @@
 
                 window.jcCredit = data.credit;
 
-                console.log('JARVIS credit balance:', {
+                debugLog('CREDIT', 'JARVIS credit balance', {
                     actualUsd: data.credit.actual_usd_balance,
                     multiplier: data.credit.multiplier,
                     jarvisUsd: data.credit.jarvis_usd_balance,
@@ -2156,8 +2458,9 @@
             );
         }
     }
-    // Restore saved credit
-    const savedCredit = localStorage.getItem('jc_credit');
+    // Restore the last known credit (FIX: this read 'jc_credit' while the writer uses 'jc_credit_php',
+    // so the cached value was never restored)
+    const savedCredit = localStorage.getItem('jc_credit_php');
 
     if (savedCredit !== null) {
         updateCreditDisplay(savedCredit);
@@ -2174,6 +2477,7 @@
 
     function setAiState(state) {
         window.jcAiStateName = state; // lets the lazily-loaded avatar pick up the current state
+        window.dispatchEvent(new CustomEvent('jc:avatar-state', { detail: { state } }));
 
         if (presence) {
             presence.classList.remove('ai-idle', 'ai-armed', 'ai-listening', 'ai-thinking', 'ai-speaking');
@@ -2231,10 +2535,10 @@
         emailResults.innerHTML = '';
 
         result.classList.remove('hidden');
-        resultLabel.textContent = 'Email';
+        resultLabel.textContent = getAiName();
         resultClose.classList.remove('hidden');
 
-        responseBox.textContent = jcNote || 'Here is that email. You can type a reply below, or say "proceed" and I\'ll draft one for you.';
+        window.jcResponse?.render(responseBox, { display: { type: 'conversation', message: jcNote || 'Here is that email. You can type a reply below, or ask me to draft one.' } });
         responseBox.classList.remove('hidden');
 
         emailSubjectEl.textContent = email.subject || '(No subject)';
@@ -2264,7 +2568,6 @@
         currentEmail = null;
         draftPending = false;
         emailView.classList.add('hidden');
-        resultClose.classList.add('hidden');
         result.classList.add('hidden');
     }
 
@@ -2464,45 +2767,117 @@
     // =====================================================================
 
     function getFriendlyVoice() {
+        if (!speakingSupported) return null;
+
         const voices = window.speechSynthesis.getVoices();
-        const englishVoices = voices.filter((voice) => /^en([-_]|$)/i.test(voice.lang));
-        const preferredNames = [
-            'jenny', 'aria', 'ava', 'samantha', 'zira', 'hazel', 'susan',
-            'karen', 'tessa', 'moira', 'female', 'google us english'
-        ];
 
-        for (const name of preferredNames) {
-            const match = englishVoices.find((voice) => voice.name.toLowerCase().includes(name));
-
-            if (match) {
-                return match;
-            }
+        if (!voices.length) {
+            return null;
         }
 
-        return englishVoices.find((voice) => /^en[-_]us$/i.test(voice.lang)) || englishVoices[0] || null;
+        const englishVoices = voices.filter((voice) =>
+            /^en([-_]|$)/i.test(voice.lang)
+        );
+
+        if (!englishVoices.length) {
+            return null;
+        }
+
+        const preferredFemaleNames = [
+            'jenny',
+            'aria',
+            'samantha',
+            'zira',
+            'susan',
+            'victoria',
+            'karen',
+            'hazel',
+            'moira',
+            'ava',
+            'allison',
+            'tessa',
+            'sara',
+            'female'
+        ];
+
+        const scoredVoices = englishVoices.map((voice) => {
+            const name = voice.name.toLowerCase();
+            const lang = voice.lang.toLowerCase();
+
+            let score = 0;
+
+            preferredFemaleNames.forEach((keyword, index) => {
+                if (name.includes(keyword)) {
+                    score += 100 - index;
+                }
+            });
+
+            if (lang === 'en-us') {
+                score += 20;
+            }
+
+            if (!voice.localService) {
+                score -= 5;
+            }
+
+            return { voice, score };
+        });
+
+        scoredVoices.sort((a, b) => b.score - a.score);
+
+        return scoredVoices[0]?.voice || null;
+    }
+
+    // FIX: guarded, so browsers without speech synthesis don't throw on page load
+    if (speakingSupported) {
+        window.speechSynthesis.addEventListener('voiceschanged', () => {
+            const voice = getFriendlyVoice();
+
+            if (voice) {
+                debugLog('VOICE', `Voice ready: ${voice.name} (${voice.lang})`);
+            }
+        });
     }
 
     function speak(text) {
+        text = window.jcResponse?.safeSpeech(text) ?? 'The details are on screen.';
         if (!speakingSupported || !text) return;
 
         isJCSpeaking = true;
         clearTimeout(restartTimer);
 
+        // Stop voice recognition while JARVIS is speaking
         if (recognition) {
             try {
                 recognition.stop();
             } catch (e) {
-                // Already stopped
+                // Recognition may already be stopped
             }
         }
 
+        // Stop any previous speech
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.voice = getFriendlyVoice();
-        utterance.lang = utterance.voice?.lang || 'en-US';
-        utterance.rate = 0.96;
-        utterance.pitch = 1.12;
+
+        // Select feminine English voice
+        const voice = getFriendlyVoice();
+
+        if (voice) {
+            utterance.voice = voice;
+            utterance.lang = voice.lang || 'en-US';
+
+            debugLog('VOICE', `Voice: ${voice.name} (${voice.lang})`);
+        } else {
+            // Safe fallback
+            utterance.lang = 'en-US';
+            console.warn('No preferred feminine voice found. Using browser default.');
+        }
+
+        // Feminine / natural speaking characteristics
+        utterance.rate = 0.90;
+        utterance.pitch = 1.16;
+        utterance.volume = 1.0;
 
         utterance.onstart = function () {
             setAiState('speaking');
@@ -2510,7 +2885,10 @@
         };
 
         utterance.onboundary = function (event) {
-            if (window.jcAvatar && typeof window.jcAvatar.pulse === 'function') {
+            if (
+                window.jcAvatar &&
+                typeof window.jcAvatar.pulse === 'function'
+            ) {
                 window.jcAvatar.pulse(event, text);
             }
         };
@@ -2522,7 +2900,12 @@
 
         utterance.onerror = function (event) {
             isJCSpeaking = false;
-            console.error('Speech error:', event.error);
+
+            console.error(
+                'JARVIS speech error:',
+                event.error
+            );
+
             afterSpeakingOrIdle();
         };
 
@@ -2550,6 +2933,7 @@
 
         jarvisPaused = true;
         jarvisWorking = false;
+        window.jcResponse?.finish(responseBox);
 
         if (activeCommandController) {
             try {
@@ -2641,7 +3025,51 @@
     // MAIN COMMAND HANDLER
     // =====================================================================
 
-    async function talkToJarvis(spokenCommand) {
+    let visualCapabilityCategory = null;
+    let capabilityExplanationActive = false;
+    let pendingClarificationId = null;
+    window.addEventListener('jc:response-command', (event) => {
+        const command = event.detail?.command;
+        if (typeof command === 'string' && !jarvisWorking) {
+            void talkToJarvis(command).finally(() => window.jcResponse?.setBusy(false));
+        } else {
+            window.jcResponse?.setBusy(jarvisWorking);
+        }
+    });
+    window.addEventListener('jc:response-fill', (event) => {
+        if (!jarvisWorking && typeof event.detail?.text === 'string') {
+            input.value = event.detail.text;
+            input.focus();
+        }
+    });
+    window.addEventListener('jc:response-open-email', (event) => {
+        if (jarvisWorking || !/^\d+$/.test(String(event.detail?.uid ?? ''))) return;
+        const button = document.createElement('button');
+        button.dataset.uid = event.detail.uid;
+        window.jcResponse?.setBusy(true);
+        void selectEmail(button).finally(() => window.jcResponse?.setBusy(false));
+    });
+    window.addEventListener('jc:clarification-answer', (event) => {
+        const answer = event.detail?.answer;
+        if (typeof answer === 'string' && !jarvisWorking) {
+            void talkToJarvis(answer, event.detail?.clarificationId).finally(() => window.jcClarification?.setBusy(false));
+        } else {
+            window.jcClarification?.setBusy(jarvisWorking);
+        }
+    });
+    window.addEventListener('jc:visual-demo-category', (event) => {
+        visualCapabilityCategory = event.detail?.category || null;
+    });
+    window.addEventListener('jc:visual-demo-command', (event) => {
+        const command = event.detail?.command;
+        if (typeof command === 'string' && !jarvisWorking) {
+            void talkToJarvis(command).finally(() => window.jcVisualDemo?.setBusy(false));
+        } else {
+            window.jcVisualDemo?.setBusy(jarvisWorking);
+        }
+    });
+
+    async function talkToJarvis(spokenCommand, clarificationId = undefined) {
         const command = ((spokenCommand !== undefined ? spokenCommand : input.value).trim());
 
         if (!command) return;
@@ -2657,10 +3085,8 @@
             return;
         }
 
-        const normalized = command.toLowerCase();
-
         // Draft reply shortcut
-        if (currentEmail && !draftPending && PROCEED_PHRASES.some(phrase => normalized.includes(phrase))) {
+        if (currentEmail && !draftPending && !pendingClarificationId && !clarificationId && window.jcVisualDemo?.isExplicitDraftCommand(command, capabilityExplanationActive)) {
             input.value = '';
             await draftReply();
             return;
@@ -2669,6 +3095,10 @@
         // Start working
         jarvisWorking = true;
         jarvisPaused = false;
+
+        window.jcVisualDemo?.setBusy(true);
+        window.jcClarification?.setBusy(true);
+        window.jcResponse?.setBusy(true);
 
         input.disabled = true;
         send.disabled = true;
@@ -2679,9 +3109,9 @@
         setLabel(`${getAiName()} is thinking...`);
 
         result.classList.remove('hidden');
-        resultLabel.textContent = `${getAiName()} Response`;
+        resultLabel.textContent = getAiName();
         responseBox.classList.remove('hidden');
-        responseBox.textContent = 'Thinking...';
+        window.jcResponse?.begin(responseBox, command);
 
         try {
             const response = await fetch('/jarvis/command', {
@@ -2694,6 +3124,8 @@
                 body: JSON.stringify({
                     command: command,
                     conversation_id: conversationId,
+                    visual_category: visualCapabilityCategory,
+                    clarification_id: clarificationId ?? pendingClarificationId,
                     email_uid: currentEmail ? currentEmail.uid : null,
                 }),
                 signal: activeCommandController.signal,
@@ -2706,7 +3138,17 @@
             if (jarvisPaused) return;
 
             if (!response.ok || !data.success) {
-                throw new Error(data.error || `${getAiName()} could not process the command.`);
+                pendingClarificationId = null;
+                capabilityExplanationActive = true;
+                window.jcResponse?.render(responseBox, data.display ? data : {
+                    display: { type: 'error', message: 'I could not finish that. Check the details below.', details: data.error || data.message || 'Please try again.' },
+                });
+                speak(window.jcResponse?.speechFor(data));
+                return;
+            }
+
+            if (Array.isArray(data.wake_name_variants)) {
+                window.jcSetWakeName(getAiName(), data.wake_name_variants);
             }
 
             // Save conversation ID
@@ -2714,6 +3156,8 @@
                 conversationId = data.conversation_id;
                 localStorage.setItem('jc_conversation_id', conversationId);
             }
+
+            window.jcArtifactWorkspace?.show(data.artifacts);
 
             // Update remaining credit balance
             if (
@@ -2732,7 +3176,7 @@
             }
 
             // Handle email results
-            let finalResponse = data.response || 'Done.';
+            let finalResponse = data.type === 'visual_demo' ? (data.response || '') : (data.response || 'Done.');
 
             if (Array.isArray(data.emails)) {
                 showEmailResults(data.emails);
@@ -2743,7 +3187,7 @@
                         finalResponse = `Done. I found ${data.emails.length} matching email${data.emails.length === 1 ? '' : 's'}.`;
                     }
                 } else {
-                    finalResponse = 'I finished searching, but I could not find any matching emails.';
+                    finalResponse = data.response || 'I finished searching, but I could not find any matching emails.';
                 }
             } else {
                 emailResults.classList.add('hidden');
@@ -2756,10 +3200,25 @@
             }
 
             // Display response
-            responseBox.textContent = finalResponse;
+            const responseRendered = window.jcResponse?.render(responseBox, data);
+            if (!responseRendered) {
+                responseBox.textContent = finalResponse;
+            }
+            if (data.display?.type === 'email_preview') {
+                emailResults.classList.add('hidden');
+                emailResults.replaceChildren();
+            }
+            pendingClarificationId = data.type === 'clarification' ? data.clarification_id : null;
+            if (data.type === 'visual_demo') {
+                visualCapabilityCategory = data.category || null;
+            } else {
+                visualCapabilityCategory = null;
+            }
+            if (data.type === 'visual_demo' || data.type === 'clarification') emailView.classList.add('hidden');
+            capabilityExplanationActive = ['visual_demo', 'capabilities', 'capability_summary', 'live_demo', 'data_unavailable', 'clarification'].includes(data.type);
 
             // Announce completion
-            speak(finalResponse);
+            speak(window.jcResponse?.speechFor(data));
 
             debugLog('COMMAND', 'Command completed', { command, response: finalResponse });
 
@@ -2772,15 +3231,20 @@
             console.error('JC command error:', error);
 
             const friendly = describeFetchError(error);
-            responseBox.textContent = friendly;
+            window.jcResponse?.render(responseBox, { display: { type: 'error', message: 'I could not finish that. Try again in a moment.', details: friendly } });
             responseBox.classList.remove('hidden');
 
-            speak("Sorry, I ran into a problem. " + friendly);
+            speak('I could not finish that. Try again in a moment.');
 
         } finally {
             activeCommandController = null;
             jarvisWorking = false;
             jarvisPaused = false;
+
+            window.jcVisualDemo?.setBusy(false);
+            window.jcClarification?.setBusy(false);
+            window.jcResponse?.setBusy(false);
+            window.jcResponse?.finish(responseBox);
 
             input.disabled = false;
             send.disabled = false;
@@ -2849,13 +3313,13 @@
             setAiState(wakeModeEnabled ? 'listening' : 'idle');
             setLabel('Email opened');
 
-            speak(`I opened the email from ${email.from_name || email.from || 'Unknown sender'}.`);
+            speak('The email is open.');
 
         } catch (error) {
             const message = error.name === 'AbortError' ? 'Email loading timed out.' : error.message;
             console.error('Unable to open email:', error);
 
-            responseBox.textContent = message;
+            window.jcResponse?.render(responseBox, { display: { type: 'error', message: 'I could not open that email.', details: message } });
             responseBox.classList.remove('hidden');
             result.classList.remove('hidden');
 
@@ -2909,13 +3373,13 @@
             draftStatus.textContent = 'Draft ready — review, edit if needed, then send.';
 
             const spoken = 'I\'ve drafted a reply. Take a look, and send it whenever you\'re ready.';
-            responseBox.textContent = spoken;
+            window.jcResponse?.render(responseBox, { display: { type: 'status', message: spoken } });
             speak(spoken);
 
         } catch (error) {
             draftStatus.textContent = '';
-            responseBox.textContent = error.message;
-            speak("Sorry, I couldn't draft that. " + error.message);
+            window.jcResponse?.render(responseBox, { display: { type: 'error', message: 'I could not prepare that reply.', details: error.message } });
+            speak('I could not prepare that reply. The details are on screen.');
 
         } finally {
             draftBtn.disabled = false;
@@ -2961,13 +3425,13 @@
 
             draftStatus.textContent = 'Reply sent.';
             const spoken = 'Your reply has been sent.';
-            responseBox.textContent = spoken;
+            window.jcResponse?.render(responseBox, { display: { type: 'status', message: spoken } });
             speak(spoken);
 
         } catch (error) {
             draftStatus.textContent = '';
-            responseBox.textContent = error.message;
-            speak("Sorry, I couldn't send that. " + error.message);
+            window.jcResponse?.render(responseBox, { display: { type: 'error', message: 'I could not send that reply.', details: error.message } });
+            speak('I could not send that reply. The details are on screen.');
 
         } finally {
             sendReplyBtn.disabled = false;
@@ -2980,6 +3444,25 @@
     // =====================================================================
     // AUTOMATIC EMAIL MONITOR
     // =====================================================================
+
+    async function acknowledgeEmailNotifications(notifications) {
+        const tokens = notifications.map(notification => notification.token).filter(Boolean);
+        if (tokens.length === 0) return;
+
+        const response = await fetch('/jarvis/notification/ack', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': getCSRFToken(),
+            },
+            body: JSON.stringify({ tokens }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Notification acknowledgement failed with HTTP ${response.status}`);
+        }
+    }
 
     async function checkUnreadEmails() {
         if (jarvisWorking) return;
@@ -2995,64 +3478,32 @@
 
             const data = await response.json();
 
-            if (!data.success || !Array.isArray(data.emails)) return;
+            if (!data.success || !Array.isArray(data.notifications)) return;
 
-            const unreadEmails = data.emails;
+            const notifications = data.notifications;
+            if (notifications.length === 0) return;
 
-            // Initialize known emails on first check
-            if (!unreadEmailInitialized) {
-                unreadEmails.forEach(email => {
-                    if (email.uid) {
-                        knownUnreadEmailUids.add(String(email.uid));
-                    }
-                });
-                unreadEmailInitialized = true;
-                debugLog('EMAIL', `Monitor initialized with ${unreadEmails.length} existing unread email(s)`);
-                return;
-            }
-
-            // Find new unread emails
-            const newEmails = unreadEmails.filter(email =>
-                email.uid && !knownUnreadEmailUids.has(String(email.uid))
-            );
-
-            // Update known emails
-            unreadEmails.forEach(email => {
-                if (email.uid) {
-                    knownUnreadEmailUids.add(String(email.uid));
-                }
-            });
-
-            if (newEmails.length === 0) return;
-
-            debugLog('EMAIL', `New unread emails detected: ${newEmails.length}`);
+            debugLog('EMAIL', `Actionable unread email notifications: ${notifications.length}`);
 
             // Inbox drawer is now stale
             inboxLoaded = false;
 
-            const newest = newEmails[0];
-            const sender = newest.from_name || newest.from || 'someone';
-            const subject = newest.subject || '(No subject)';
-            const count = newEmails.length;
-
-            const message = count === 1
-                ? `You have a new unread email from ${sender}, regarding ${subject}.`
-                : `You have ${count} new unread emails. The latest is from ${sender}, regarding ${subject}.`;
+            const presentation = window.jcResponse.emailAttentionResponse(notifications);
 
             // Display notification
             result.classList.remove('hidden');
-            resultLabel.textContent = 'New Email';
-            responseBox.textContent = message;
+            resultLabel.textContent = 'Email Needs Attention';
+            window.jcResponse.render(responseBox, presentation);
             responseBox.classList.remove('hidden');
 
             emailView.classList.add('hidden');
-            resultClose.classList.add('hidden');
-
-            showEmailResults(newEmails);
+            resultClose.classList.remove('hidden');
 
             setAiState('speaking');
-            setLabel('New unread email');
-            speak(message);
+            setLabel('Email needs your attention');
+            speak(window.jcResponse.speechFor(presentation));
+
+            await acknowledgeEmailNotifications(notifications);
 
         } catch (error) {
             // Rethrow so the scheduler can back off (network errors show up here as "Failed to fetch")
@@ -3123,16 +3574,28 @@
     // =====================================================================
 
     function stripWakePhrase(transcript) {
-        const lower = transcript.toLowerCase().trim();
+        const words = [...transcript.matchAll(/[\p{L}\p{N}]+/gu)];
+        const normalizedWords = words.map(([word]) => normalizeWakeText(word));
 
         for (const phrase of WAKE_PHRASES) {
-            const idx = lower.indexOf(phrase);
-            if (idx !== -1) {
-                const after = transcript.slice(idx + phrase.length).trim();
-                return {
-                    heard: true,
-                    remainder: after.replace(/^[,.\s]+/, '')
-                };
+            const phraseWords = phrase.split(' ');
+
+            for (let start = 0; start <= normalizedWords.length - phraseWords.length; start++) {
+                const matchesPhrase = phraseWords.every((word, offset) => {
+                    const spokenWord = normalizedWords[start + offset];
+                    const isNameWord = offset === phraseWords.length - 1;
+
+                    return spokenWord === word || (isNameWord && matchesWakeNameWord(spokenWord, word));
+                });
+
+                if (matchesPhrase) {
+                    const lastWord = words[start + phraseWords.length - 1];
+                    const remainder = transcript
+                        .slice(lastWord.index + lastWord[0].length)
+                        .replace(/^[\s,.;:!?-]+/, '');
+
+                    return { heard: true, remainder, phrase };
+                }
             }
         }
 
@@ -3206,7 +3669,7 @@
             }
 
             // Wake mode - listen for wake phrase
-            const { heard, remainder } = stripWakePhrase(transcript);
+            const { heard, remainder, phrase } = stripWakePhrase(transcript);
 
             if (!heard) return;
 
@@ -3224,6 +3687,14 @@
 
             // Just wake phrase
             startConversationMode();
+
+            if (phrase.startsWith('wake up ')) {
+                setAiState('listening');
+                setLabel("I'm listening...");
+                checkUnreadEmails();
+                return;
+            }
+
             setAiState('listening');
             setLabel("I'm listening...");
         };
@@ -3775,122 +4246,26 @@
 </script>
 
 {{-- =====================================================================
-     SETTINGS DRAWER + MAILBOX
+     SETTINGS DRAWER + EMAIL ACCOUNTS
      ===================================================================== --}}
 <script>
 (function () {
+    'use strict';
+
     const $ = (id) => document.getElementById(id);
 
-    const drawer = $('jc-settings-drawer');
+    const drawer   = $('jc-settings-drawer');
     const backdrop = $('jc-settings-backdrop');
     const statusEl = $('jc-settings-status');
+    const CSRF     = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const DEBUG    = localStorage.getItem('jc_debug') === 'true';
 
-    const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    if (!drawer) return;
 
-    // Debug logging is opt-in: localStorage.setItem('jc_debug', 'true')
-    const DEBUG = localStorage.getItem('jc_debug') === 'true';
-
-    function debugLog(msg, data) {
-        if (DEBUG) console.log(`[Settings] ${msg}`, data ?? '');
-    }
-
-    const INPUT_CLS = 'mt-1 h-9 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 text-xs text-white outline-none placeholder:text-white/20 focus:border-white/25';
-    const LABEL_CLS = 'text-[9px] uppercase text-white/40 font-medium';
+    const debugLog = (msg, data) => { if (DEBUG) console.log(`[Settings] ${msg}`, data ?? ''); };
 
     // =====================================================================
-    // DRAWER OPEN / CLOSE
-    // =====================================================================
-
-    function showSettingsLoadingState() {
-        const keyStatus = $('jc-key-status');
-        if (keyStatus) {
-            keyStatus.textContent = 'Loading...';
-            keyStatus.style.color = '#9ca3af';
-        }
-
-        const pwStatus = $('jc-email-pw-status');
-        if (pwStatus) {
-            pwStatus.textContent = 'Loading...';
-            pwStatus.style.color = '#9ca3af';
-        }
-    }
-
-    function openSettings(tabName) {
-        if (!drawer) return;
-
-        if (typeof tabName === 'string') activateTab(tabName);
-
-        drawer.classList.remove('translate-x-full');
-        backdrop?.classList.remove('hidden');
-        drawer.setAttribute('aria-hidden', 'false');
-
-        showSettingsLoadingState();
-
-        loadSettings();
-    }
-
-    function closeSettings() {
-        if (!drawer) return;
-
-        drawer.classList.add('translate-x-full');
-        backdrop?.classList.add('hidden');
-        drawer.setAttribute('aria-hidden', 'true');
-    }
-
-    $('jc-settings-btn')?.addEventListener('click', () => openSettings());
-    $('jc-mailbox-chip')?.addEventListener('click', () => openSettings('email'));
-    $('jc-settings-close')?.addEventListener('click', closeSettings);
-    backdrop?.addEventListener('click', closeSettings);
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeSettings();
-    });
-
-    // =====================================================================
-    // TAB NAVIGATION
-    // =====================================================================
-
-    function activateTab(tabName) {
-        document.querySelectorAll('.jc-tab').forEach((t) => {
-            const active = t.dataset.tab === tabName;
-            t.classList.toggle('text-white', active);
-            t.classList.toggle('text-white/40', !active);
-        });
-
-        document.querySelectorAll('.jc-tab-panel').forEach((panel) => {
-            panel.classList.toggle('hidden', panel.dataset.panel !== tabName);
-        });
-    }
-
-    document.querySelectorAll('.jc-tab').forEach((tab) => {
-        tab.addEventListener('click', () => activateTab(tab.dataset.tab));
-    });
-
-    // =====================================================================
-    // API KEY VISIBILITY TOGGLE
-    // =====================================================================
-
-    $('jc-toggle-key')?.addEventListener('click', () => {
-        const keyInput = $('jc-set-api-key');
-        const toggle = $('jc-toggle-key');
-        if (!keyInput) return;
-
-        const isPassword = keyInput.type === 'password';
-        keyInput.type = isPassword ? 'text' : 'password';
-        if (toggle) toggle.textContent = isPassword ? 'Hide' : 'Show';
-    });
-
-    $('jc-toggle-email-pw')?.addEventListener('click', () => {
-        const pw = $('jc-set-email-password');
-        const toggle = $('jc-toggle-email-pw');
-        if (!pw) return;
-        const isPassword = pw.type === 'password';
-        pw.type = isPassword ? 'text' : 'password';
-        if (toggle) toggle.textContent = isPassword ? 'Hide' : 'Show';
-    });
-
-    // =====================================================================
-    // UTILITIES
+    // SHARED HELPERS
     // =====================================================================
 
     function escapeHtml(value) {
@@ -3899,41 +4274,131 @@
         return div.innerHTML;
     }
 
-    function showStatus(message, isError = false, duration = 3000) {
+    function getErrorMessages(data) {
+        if (data?.errors && typeof data.errors === 'object') {
+            return Object.values(data.errors)
+                .map((m) => (Array.isArray(m) ? m[0] : m))
+                .join('\n');
+        }
+        return data?.message || data?.error || 'Unknown error';
+    }
+
+    function friendlyError(error) {
+        if (typeof window.jcDescribeFetchError === 'function') return window.jcDescribeFetchError(error);
+        return (error && error.message) || 'Unknown error';
+    }
+
+    let statusTimer = null;
+    function showStatus(message, isError = false, duration = 3500) {
         if (!statusEl) return;
-
+        clearTimeout(statusTimer);
         statusEl.textContent = message;
-        statusEl.style.color = isError ? '#ef4444' : '#a3e635';
-
+        statusEl.title = message;
+        statusEl.style.color = isError ? '#f87171' : '#a3e635';
         if (!isError && duration > 0) {
-            setTimeout(() => {
+            statusTimer = setTimeout(() => {
                 if (statusEl.textContent === message) statusEl.textContent = '';
             }, duration);
         }
     }
 
-    function friendlyError(error) {
-        if (typeof window.jcDescribeFetchError === 'function') {
-            return window.jcDescribeFetchError(error);
-        }
-        return (error && error.message) || 'Unknown error';
-    }
-
-    function getErrorMessages(data) {
-        if (data?.errors && typeof data.errors === 'object') {
-            return Object.entries(data.errors)
-                .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages[0] : messages}`)
-                .join('\n');
+    /**
+     * One fetch wrapper for every settings call. Handles CSRF, session expiry (419),
+     * HTML error pages (which used to surface as "Unexpected token <") and Laravel 422 errors.
+     */
+    async function api(url, { method = 'GET', body } = {}) {
+        const headers = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+        if (method !== 'GET') {
+            headers['Content-Type'] = 'application/json';
+            headers['X-CSRF-TOKEN'] = CSRF;
         }
 
-        return data?.message || data?.error || 'Unknown error';
+        const response = await fetch(url, {
+            method,
+            headers,
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+            cache: method === 'GET' ? 'no-store' : undefined,
+            credentials: 'same-origin',
+        });
+
+        if (response.status === 419) throw new Error('Your session expired. Reload the page and try again.');
+        if (response.status === 401) throw new Error('You are signed out. Reload the page and sign in again.');
+
+        const text = await response.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : {}; } catch (e) { data = null; }
+
+        if (data === null) throw new Error(`The server returned an unexpected response (HTTP ${response.status}).`);
+        if (!response.ok || data.success === false) throw new Error(getErrorMessages(data));
+
+        return data;
     }
 
+    function markInvalid(id, on = true) {
+        $(id)?.classList.toggle('is-invalid', on);
+    }
+
+    function clearInvalid(scope) {
+        (scope || drawer).querySelectorAll('.is-invalid').forEach((el) => el.classList.remove('is-invalid'));
+    }
+
+    drawer.addEventListener('input', (e) => e.target.classList?.remove('is-invalid'));
+
+    function setBusy(button, busy, busyText) {
+        if (!button) return;
+        if (busy) {
+            button.dataset.label = button.textContent;
+            button.textContent = busyText;
+            button.disabled = true;
+        } else {
+            button.textContent = button.dataset.label || button.textContent;
+            button.disabled = false;
+        }
+    }
+
+    const splitList = (value) => String(value || '').split(/[,\n]/).map((v) => v.trim()).filter(Boolean);
+
     // =====================================================================
-    // GENERAL SETTINGS: READ / VALIDATE / APPLY / FILL
+    // TABS (keyboard accessible)
     // =====================================================================
+
+    const tabs = Array.from(document.querySelectorAll('.jc-tab'));
+
+    function activateTab(tabName, focus = false) {
+        tabs.forEach((t) => {
+            const active = t.dataset.tab === tabName;
+            t.setAttribute('aria-selected', active ? 'true' : 'false');
+            t.tabIndex = active ? 0 : -1;
+            if (active && focus) t.focus();
+        });
+        document.querySelectorAll('.jc-tab-panel').forEach((panel) => {
+            panel.classList.toggle('hidden', panel.dataset.panel !== tabName);
+        });
+    }
+
+    tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+        tab.addEventListener('keydown', (e) => {
+            let next = null;
+            if (e.key === 'ArrowRight') next = (index + 1) % tabs.length;
+            else if (e.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+            else if (e.key === 'Home') next = 0;
+            else if (e.key === 'End') next = tabs.length - 1;
+            if (next === null) return;
+            e.preventDefault();
+            activateTab(tabs[next].dataset.tab, true);
+        });
+    });
+
+    // =====================================================================
+    // GENERAL SETTINGS: READ / VALIDATE / FILL
+    // =====================================================================
+
+    let lastSettings = null;   // last copy from the server
+    let baseline = '';         // serialized form state used for the unsaved-changes check
 
     function readForm() {
+        const rawLimit = ($('jc-set-credit-limit')?.value || '').trim();
         return {
             ai_name: $('jc-set-ai-name')?.value.trim() || '',
             owner_name: $('jc-set-owner-name')?.value.trim() || '',
@@ -3941,193 +4406,77 @@
             allowed_actions: Array.from(document.querySelectorAll('.jc-scope-cb:checked')).map((cb) => cb.value),
             confirm_before_send: $('jc-set-confirm-send')?.checked ?? true,
             tone: $('jc-set-tone')?.value || 'professional',
-            daily_credit_limit: parseInt($('jc-set-credit-limit')?.value, 10) || 0,
+            capability_demonstrations: $('jc-set-capability-demonstrations')?.value || 'ask_first',
+            daily_credit_limit: rawLimit === '' ? 0 : parseInt(rawLimit, 10),
             scope_of_work: $('jc-set-scope')?.value.trim() || '',
             limitations: $('jc-set-limits')?.value.trim() || '',
-
-            // Mailbox (password blank = keep the current one)
-            email_address: $('jc-set-email-address')?.value.trim() || '',
-            email_password: $('jc-set-email-password')?.value || '',
-            imap_host: $('jc-set-imap-host')?.value.trim() || '',
-            imap_port: parseInt($('jc-set-imap-port')?.value, 10) || null,
-            imap_encryption: $('jc-set-imap-encryption')?.value || 'ssl',
-            smtp_host: $('jc-set-smtp-host')?.value.trim() || '',
-            smtp_port: parseInt($('jc-set-smtp-port')?.value, 10) || null,
-            smtp_encryption: $('jc-set-smtp-encryption')?.value || 'ssl',
+            learned_memory: $('jc-set-learned-memory')?.value.trim() || '',
+            wake_name_variants: splitList($('jc-set-wake-variants')?.value),
         };
     }
 
+    const isDirty = () => baseline !== '' && JSON.stringify(readForm()) !== baseline;
+    const snapshot = () => { baseline = JSON.stringify(readForm()); };
+
+    function fail(tab, id, message) {
+        activateTab(tab);
+        markInvalid(id);
+        showStatus('✗ ' + message, true, 0);
+        $(id)?.focus();
+        return false;
+    }
+
     function validateSettings() {
-        const aiName = $('jc-set-ai-name')?.value.trim() || '';
-        const ownerName = $('jc-set-owner-name')?.value.trim() || '';
+        clearInvalid();
+        const f = readForm();
 
-        if (aiName.length > 30) {
-            showStatus('AI name must be 30 characters or less', true, 0);
-            return false;
+        if (f.ai_name.length > 30)    return fail('identity', 'jc-set-ai-name', 'AI name must be 30 characters or less.');
+        if (f.owner_name.length > 60) return fail('identity', 'jc-set-owner-name', 'Owner name must be 60 characters or less.');
+        if (f.learned_memory.length > 4000) return fail('identity', 'jc-set-learned-memory', 'Saved memories are limited to 4000 characters.');
+
+        if (!Number.isInteger(f.daily_credit_limit) || f.daily_credit_limit < 0) {
+            return fail('scope', 'jc-set-credit-limit', 'Daily credit limit must be zero or a positive whole number.');
         }
 
-        if (ownerName.length > 60) {
-            showStatus('Owner name must be 60 characters or less', true, 0);
-            return false;
-        }
-
-        const creditLimit = parseInt($('jc-set-credit-limit')?.value, 10);
-
-        if (isNaN(creditLimit) || creditLimit < 0) {
-            showStatus('Daily credit limit must be zero or a positive number', true, 0);
-            return false;
-        }
-
-        const emailAddress = $('jc-set-email-address')?.value.trim() || '';
-        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
-            showStatus('Enter a valid email address', true, 0);
-            return false;
-        }
-
-        const typedPassword = $('jc-set-email-password')?.value || '';
-        if (emailAddress && !typedPassword && !lastSettings?.has_email_password) {
-            showStatus('Enter the mailbox password for this email', true, 0);
-            return false;
-        }
-
-        for (const [id, label] of [['jc-set-imap-port', 'IMAP'], ['jc-set-smtp-port', 'SMTP']]) {
-            const raw = $(id)?.value;
-            if (raw) {
-                const port = parseInt(raw, 10);
-                if (isNaN(port) || port < 1 || port > 65535) {
-                    showStatus(label + ' port must be between 1 and 65535', true, 0);
-                    return false;
-                }
-            }
+        if (f.api_key && !/^sk-ant-[A-Za-z0-9_\-]{20,}$/.test(f.api_key)) {
+            return fail('apikey', 'jc-set-api-key', 'That does not look like an Anthropic API key (it should start with sk-ant-).');
         }
 
         return true;
     }
 
-    // =====================================================================
-    // REGISTERED MAILBOX (header chip, Email tab card, inbox drawer line)
-    // =====================================================================
-
-    let lastSettings = null;
-
-    function showMailboxForm(visible) {
-        $('jc-mailbox-form')?.classList.toggle('hidden', !visible);
-        if (visible) $('jc-set-email-address')?.focus();
+    function updateScopeWarning() {
+        const canSend = ['send_replies', 'send_emails'].some((v) => document.querySelector(`.jc-scope-cb[value="${v}"]`)?.checked);
+        const confirm = $('jc-set-confirm-send')?.checked;
+        $('jc-scope-warning')?.classList.toggle('hidden', !(canSend && !confirm));
     }
 
-    function renderActiveMailbox(settings) {
-        lastSettings = settings || lastSettings;
-
-        const address = (settings?.email_address || '').trim();
-        const hasPw = Boolean(settings?.has_email_password);
-        const registered = address !== '';
-
-        const imap = `${settings?.imap_host || '-'}:${settings?.imap_port || '-'}`;
-        const smtp = `${settings?.smtp_host || '-'}:${settings?.smtp_port || '-'}`;
-
-        const warning = registered && !hasPw
-            ? 'No password saved for this mailbox, so JC cannot connect. Press Change and enter the mailbox password.'
-            : '';
-
-        const ok = registered && !warning;
-        const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
-
-        // Email tab card
-        $('jc-am-empty')?.classList.toggle('hidden', registered);
-        $('jc-am-registered')?.classList.toggle('hidden', !registered);
-
-        setText('jc-am-address', address);
-        setText('jc-am-imap', imap);
-        setText('jc-am-smtp', smtp);
-        setText('jc-am-pw', hasPw ? '••••••••' : 'not saved');
-
-        const warn = $('jc-am-warning');
-        if (warn) {
-            warn.textContent = warning;
-            warn.classList.toggle('hidden', !warning);
-        }
-
-        const card = $('jc-active-mailbox-card');
-        if (card) card.style.borderColor = ok ? 'rgba(52, 211, 153, 0.25)' : 'rgba(255, 255, 255, 0.10)';
-
-        // Header chip
-        setText('jc-mailbox-chip-text', registered ? address : 'No email registered');
-        $('jc-mailbox-chip-badge')?.classList.add('hidden');
-
-        const dot = $('jc-mailbox-dot');
-        if (dot) dot.style.background = ok ? '#34d399' : (registered ? '#fb923c' : '#6b7280');
-
-        const chip = $('jc-mailbox-chip');
-        if (chip) {
-            chip.title = registered
-                ? `Active mailbox: ${address}. Click to change.`
-                : 'No email registered. Click to add one.';
-        }
-
-        // Inbox drawer line
-        setText('jc-inbox-mailbox', registered ? `Mailbox: ${address}` : 'No email registered');
-
-        // Form: hidden when a mailbox is registered, so the card is what you see
-        showMailboxForm(false);
+    function updateMemoryCount() {
+        const el = $('jc-memory-count');
+        if (el) el.textContent = String($('jc-set-learned-memory')?.value.length || 0);
     }
 
-    $('jc-am-add')?.addEventListener('click', () => showMailboxForm(true));
-    $('jc-am-change')?.addEventListener('click', () => showMailboxForm(true));
-    $('jc-am-cancel')?.addEventListener('click', () => {
-        if (lastSettings) fillForm(lastSettings); // discard edits
-        showMailboxForm(false);
-    });
+    document.querySelectorAll('.jc-scope-cb').forEach((cb) => cb.addEventListener('change', updateScopeWarning));
+    $('jc-set-confirm-send')?.addEventListener('change', updateScopeWarning);
+    $('jc-set-learned-memory')?.addEventListener('input', updateMemoryCount);
 
-    $('jc-am-remove')?.addEventListener('click', async () => {
-        if (!confirm('Remove the registered email from JC?\n\nJC will no longer be able to read or send email until you add one again.')) {
-            return;
-        }
-
-        showStatus('Removing email...');
-
-        try {
-            const response = await fetch('/jarvis/settings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': CSRF,
-                },
-                body: JSON.stringify({
-                    ...readForm(),
-                    api_key: '',
-                    email_address: '',
-                    email_password: '',
-                    imap_host: '',
-                    imap_port: null,
-                    smtp_host: '',
-                    smtp_port: null,
-                    clear_email: true,
-                }),
-            });
-
-            const data = await response.json();
-            if (!response.ok || !data.success) throw new Error(getErrorMessages(data));
-
-            if (data.settings) fillForm(data.settings);
-            showStatus('✓ Email removed.');
-        } catch (error) {
-            console.error('Remove email error:', error);
-            showStatus('✗ ' + friendlyError(error), true, 0);
-        }
-    });
-
-    function applyNames(aiName, ownerName) {
+    function applyNames(aiName, ownerName, wakeNameVariants = []) {
         const name = (aiName || 'JC').trim() || 'JC';
 
-        document.querySelectorAll('[data-ai-name]').forEach((el) => {
-            el.textContent = name;
-        });
-
+        document.querySelectorAll('[data-ai-name]').forEach((el) => { el.textContent = name; });
         document.title = name + ' - AI Assistant';
 
         const input = $('jarvis-input');
-        if (input) input.placeholder = `Say "Hello ${name}..." or type here`;
+        if (input) {
+            input.placeholder = `Ask ${name} anything...`;
+            input.setAttribute('aria-label', `Ask ${name} anything`);
+        }
+        $('jarvis-result')?.setAttribute('aria-label', `${name} Response`);
+        $('jarvis-wake-toggle')?.setAttribute('title', `Enable always-listening for "Hello ${name}"`);
+        const reply = $('jarvis-reply-text');
+        if (reply) reply.placeholder = `Type your reply, or say "proceed" and ${name} will draft one`;
+        const draftButton = $('jarvis-draft-btn');
+        if (draftButton) draftButton.textContent = `Ask ${name} to draft`;
 
         window.jcAiName = name;
         window.jcOwnerName = ownerName || '';
@@ -4135,28 +4484,27 @@
         localStorage.setItem('jc_ai_name', name);
         localStorage.setItem('jc_owner_name', ownerName || '');
 
-        if (typeof window.jcSetWakeName === 'function') {
-            window.jcSetWakeName(name);
-        }
-
-        debugLog('Names applied', { name, ownerName });
+        if (typeof window.jcSetWakeName === 'function') window.jcSetWakeName(name, wakeNameVariants);
     }
+
+    function setVal(id, value) { const el = $(id); if (el) el.value = value; }
 
     function fillForm(settings) {
         if (!settings) return;
+        lastSettings = settings;
 
-        debugLog('Filling form', {
-            ...settings,
-            api_key: settings.has_api_key ? '[SAVED]' : '[NOT SET]',
-        });
+        setVal('jc-set-ai-name', settings.ai_name || 'JC');
+        setVal('jc-set-owner-name', settings.owner_name || '');
+        setVal('jc-set-tone', settings.tone || 'professional');
+        setVal('jc-set-capability-demonstrations', settings.capability_demonstrations || 'ask_first');
+        setVal('jc-set-credit-limit', settings.daily_credit_limit || 0);
+        setVal('jc-set-scope', settings.scope_of_work || '');
+        setVal('jc-set-limits', settings.limitations || '');
+        setVal('jc-set-learned-memory', settings.learned_memory || '');
+        setVal('jc-set-wake-variants', (settings.wake_name_variants || []).join(', '));
 
-        $('jc-set-ai-name').value = settings.ai_name || 'JC';
-        $('jc-set-owner-name').value = settings.owner_name || '';
-        $('jc-set-confirm-send').checked = settings.confirm_before_send !== false;
-        $('jc-set-tone').value = settings.tone || 'professional';
-        $('jc-set-credit-limit').value = settings.daily_credit_limit || 0;
-        $('jc-set-scope').value = settings.scope_of_work || '';
-        $('jc-set-limits').value = settings.limitations || '';
+        const confirmBox = $('jc-set-confirm-send');
+        if (confirmBox) confirmBox.checked = settings.confirm_before_send !== false;
 
         if (Array.isArray(settings.allowed_actions)) {
             document.querySelectorAll('.jc-scope-cb').forEach((cb) => {
@@ -4174,149 +4522,606 @@
                 keyStatus.style.color = '#9ca3af';
             }
         }
-
-        // Never populate the actual API key field
-        $('jc-set-api-key').value = '';
-
-        // Mailbox
-        $('jc-set-email-address').value = settings.email_address || '';
-        $('jc-set-imap-host').value = settings.imap_host || '';
-        $('jc-set-imap-port').value = settings.imap_port || '';
-        $('jc-set-imap-encryption').value = settings.imap_encryption || 'ssl';
-        $('jc-set-smtp-host').value = settings.smtp_host || '';
-        $('jc-set-smtp-port').value = settings.smtp_port || '';
-        $('jc-set-smtp-encryption').value = settings.smtp_encryption || 'ssl';
-
-        // Never populate the mailbox password field
-        $('jc-set-email-password').value = '';
-
-        const pwStatus = $('jc-email-pw-status');
-        if (pwStatus) {
-            if (settings.has_email_password) {
-                pwStatus.textContent = '✓ Password saved. Enter a new one to replace it.';
-                pwStatus.style.color = '#34d399';
-            } else {
-                pwStatus.textContent = 'No password saved.';
-                pwStatus.style.color = '#9ca3af';
-            }
-        }
+        setVal('jc-set-api-key', ''); // the real key is never populated
 
         const workflowLink = $('jc-workflow-link');
-        if (workflowLink && settings.workflow_url) {
-            workflowLink.href = settings.workflow_url;
-        }
+        if (workflowLink && settings.workflow_url) workflowLink.href = settings.workflow_url;
 
-        renderActiveMailbox(settings);
-        applyNames(settings.ai_name, settings.owner_name);
+        applyNames(settings.ai_name, settings.owner_name, settings.wake_name_variants || []);
+        updateScopeWarning();
+        updateMemoryCount();
+        clearInvalid();
+        snapshot();
     }
 
     // =====================================================================
     // LOAD / SAVE GENERAL SETTINGS
     // =====================================================================
 
+    let settingsLoading = false;
+
     async function loadSettings() {
+        if (settingsLoading) return null;
+        settingsLoading = true;
+
         try {
-            debugLog('Loading settings...');
-
-            const response = await fetch('/jarvis/settings', {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' },
-                cache: 'no-store',
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) throw new Error(getErrorMessages(data));
-
-            if (data.success && data.settings) {
-                fillForm(data.settings);
-            }
-
+            const data = await api('/jarvis/settings');
+            if (data.settings) fillForm(data.settings);
             return data;
-
         } catch (error) {
             console.error('[Settings] Error loading settings:', error);
-
-            const msg = friendlyError(error);
-            showStatus('✗ ' + msg, true, 0);
+            showStatus('✗ ' + friendlyError(error), true, 0);
 
             const keyStatus = $('jc-key-status');
             if (keyStatus) {
                 keyStatus.textContent = 'Could not load key status.';
-                keyStatus.style.color = '#ef4444';
+                keyStatus.style.color = '#f87171';
             }
-
-            const pwStatus = $('jc-email-pw-status');
-            if (pwStatus) {
-                pwStatus.textContent = 'Could not load password status.';
-                pwStatus.style.color = '#ef4444';
-            }
-
-            const chipText = $('jc-mailbox-chip-text');
-            if (chipText) chipText.textContent = 'Mailbox unavailable';
-            const amAddress = $('jc-am-address');
-            if (amAddress) amAddress.textContent = 'Could not load mailbox';
-            $('jc-am-empty')?.classList.add('hidden');
-            $('jc-am-registered')?.classList.remove('hidden');
             return null;
+        } finally {
+            settingsLoading = false;
         }
     }
 
     $('jc-settings-save')?.addEventListener('click', async () => {
         if (!validateSettings()) return;
 
-        showStatus('Saving settings...');
-
+        const button = $('jc-settings-save');
         const payload = readForm();
 
-        // Never log the actual API key
-        debugLog('Saving settings:', {
-            ...payload,
-            api_key: payload.api_key ? '[REDACTED]' : '',
-            email_password: payload.email_password ? '[REDACTED]' : '',
-        });
+        debugLog('Saving settings', { ...payload, api_key: payload.api_key ? '[REDACTED]' : '' });
+
+        setBusy(button, true, 'Saving...');
+        showStatus('Saving settings...', false, 0);
 
         try {
-            const response = await fetch('/jarvis/settings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': CSRF,
-                },
-                body: JSON.stringify(payload),
-            });
+            const data = await api('/jarvis/settings', { method: 'POST', body: payload });
 
-            const data = await response.json();
+            if (data.settings) {
+                fillForm(data.settings);
+            } else {
+                setVal('jc-set-api-key', '');
+                snapshot();
+            }
 
-            if (!response.ok || !data.success) throw new Error(getErrorMessages(data));
-
-            $('jc-set-api-key').value = '';
-            $('jc-set-email-password').value = '';
-
-            if (data.settings) fillForm(data.settings);
-
-            showStatus('✓ Settings saved successfully!');
+            showStatus('✓ Settings saved.');
         } catch (error) {
             console.error('Settings save error:', error);
-            showStatus('✗ ' + error.message, true, 0);
+            showStatus('✗ ' + friendlyError(error), true, 0);
+        } finally {
+            setBusy(button, false);
         }
     });
 
-    // Load settings once the page has finished loading so the header shows the active mailbox
-    // (and the saved AI name) without opening the drawer. One small DB-only request.
-    function initialSettingsLoad() {
-        setTimeout(loadSettings, 500);
+    // Live wake-name preview while typing (reverted if the drawer is closed without saving)
+    function previewWakeName() {
+        if (typeof window.jcSetWakeName !== 'function') return;
+        window.jcSetWakeName($('jc-set-ai-name')?.value.trim() || 'JC', splitList($('jc-set-wake-variants')?.value));
+    }
+    $('jc-set-ai-name')?.addEventListener('input', previewWakeName);
+    $('jc-set-wake-variants')?.addEventListener('input', previewWakeName);
+
+    // =====================================================================
+    // API KEY VISIBILITY
+    // =====================================================================
+
+    function bindToggle(buttonId, inputId) {
+        $(buttonId)?.addEventListener('click', () => {
+            const el = $(inputId);
+            const btn = $(buttonId);
+            if (!el || !btn) return;
+            const hide = el.type === 'text';
+            el.type = hide ? 'password' : 'text';
+            btn.textContent = hide ? 'Show' : 'Hide';
+        });
+    }
+    bindToggle('jc-toggle-key', 'jc-set-api-key');
+    bindToggle('jc-email-pw-toggle', 'jc-email-password');
+
+    // =====================================================================
+    // EMAIL ACCOUNTS
+    // =====================================================================
+
+    const PRESETS = {
+        godaddy: {
+            imap: ['imap.secureserver.net', 993, 'ssl'],
+            smtp: ['smtpout.secureserver.net', 465, 'ssl'],
+            hint: 'Use the full mailbox address and its password.',
+        },
+        microsoft365: {
+            imap: ['outlook.office365.com', 993, 'ssl'],
+            smtp: ['smtp.office365.com', 587, 'tls'],
+            hint: 'Your tenant must allow IMAP and SMTP basic authentication.',
+        },
+        gmail: {
+            imap: ['imap.gmail.com', 993, 'ssl'],
+            smtp: ['smtp.gmail.com', 465, 'ssl'],
+            hint: 'Use an app password (requires 2-step verification), not your normal Google password.',
+        },
+        custom: { imap: null, smtp: null, hint: 'Enter the server details from your email provider.' },
+    };
+
+    let emailAccounts = [];
+    let accountsLoading = false;
+
+    function applyPreset(key) {
+        const preset = PRESETS[key] || PRESETS.custom;
+        if (preset.imap) {
+            setVal('jc-email-imap-host', preset.imap[0]);
+            setVal('jc-email-imap-port', preset.imap[1]);
+            setVal('jc-email-imap-encryption', preset.imap[2]);
+        }
+        if (preset.smtp) {
+            setVal('jc-email-smtp-host', preset.smtp[0]);
+            setVal('jc-email-smtp-port', preset.smtp[1]);
+            setVal('jc-email-smtp-encryption', preset.smtp[2]);
+        }
+        const hint = $('jc-email-provider-hint');
+        if (hint) hint.textContent = preset.hint;
+        updateEncryptionWarning();
     }
 
-    if (document.readyState === 'complete') {
-        initialSettingsLoad();
-    } else {
-        window.addEventListener('load', initialSettingsLoad, { once: true });
+    function detectPreset(account) {
+        const found = Object.entries(PRESETS).find(([key, p]) => p.imap && p.imap[0] === account.imap_host);
+        return found ? found[0] : 'custom';
     }
+
+    function updateEncryptionWarning() {
+        const insecure = $('jc-email-imap-encryption')?.value === 'none' || $('jc-email-smtp-encryption')?.value === 'none';
+        $('jc-email-enc-warning')?.classList.toggle('hidden', !insecure);
+    }
+
+    $('jc-email-provider')?.addEventListener('change', (e) => applyPreset(e.target.value));
+    $('jc-email-imap-encryption')?.addEventListener('change', updateEncryptionWarning);
+    $('jc-email-smtp-encryption')?.addEventListener('change', updateEncryptionWarning);
+
+    // Header chip + inbox drawer line reflect the account JC will actually use
+    function pickActiveAccount() {
+        return emailAccounts.find((a) => a.is_default && a.is_active)
+            || emailAccounts.find((a) => a.is_active)
+            || emailAccounts.find((a) => a.is_default)
+            || null;
+    }
+
+    function updateMailboxIndicators(loadFailed = false) {
+        const chipText = $('jc-mailbox-chip-text');
+        const dot = $('jc-mailbox-dot');
+        const chip = $('jc-mailbox-chip');
+        const inboxLine = $('jc-inbox-mailbox');
+        const badge = $('jc-mailbox-chip-badge');
+
+        let text, color, title;
+
+        if (loadFailed) {
+            text = 'Mailbox unavailable'; color = '#f87171'; title = 'Could not load email accounts. Click to retry.';
+        } else {
+            const account = pickActiveAccount();
+            if (!account) {
+                text = 'No email registered'; color = '#6b7280'; title = 'No email registered. Click to add one.';
+            } else if (!account.is_active) {
+                text = account.email; color = '#fb923c'; title = `Mailbox ${account.email} is inactive. Click to change.`;
+            } else {
+                text = account.email; color = '#34d399'; title = `Active mailbox: ${account.email}. Click to change.`;
+            }
+        }
+
+        if (chipText) chipText.textContent = text;
+        if (dot) dot.style.background = color;
+        if (chip) chip.title = title;
+        if (inboxLine) inboxLine.textContent = loadFailed || text === 'No email registered' ? text : `Mailbox: ${text}`;
+
+        if (badge) {
+            const extra = emailAccounts.length - 1;
+            badge.textContent = `+${extra}`;
+            badge.classList.toggle('hidden', loadFailed || extra < 1);
+        }
+    }
+
+    async function loadEmailAccounts() {
+        if (accountsLoading) return;
+        accountsLoading = true;
+
+        const list = $('jc-email-accounts-list');
+        if (list && !emailAccounts.length) {
+            list.innerHTML = '<div class="py-6 text-center text-xs text-white/30">Loading email accounts...</div>';
+        }
+
+        try {
+            const data = await api('/jarvis/email-accounts');
+            emailAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+            renderEmailAccounts();
+            updateMailboxIndicators();
+        } catch (error) {
+            console.error('[Email Accounts] Error loading accounts:', error);
+            if (list) {
+                list.innerHTML = `
+                    <div class="jc-notice jc-notice-err text-center">
+                        <div>Could not load email accounts.</div>
+                        <div class="mt-1 text-[10px] opacity-70">${escapeHtml(friendlyError(error))}</div>
+                        <button type="button" class="jc-btn jc-btn-sm mt-3" data-action="retry">Retry</button>
+                    </div>`;
+            }
+            updateMailboxIndicators(true);
+        } finally {
+            accountsLoading = false;
+        }
+    }
+
+    function renderEmailAccounts() {
+        const list = $('jc-email-accounts-list');
+        if (!list) return;
+
+        if (!emailAccounts.length) {
+            list.innerHTML = `
+                <div class="rounded-lg border border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+                    <div class="text-xs text-white/50">No email accounts configured.</div>
+                    <div class="mt-1 text-[10px] text-white/25">Add an account so JC can read and reply to email.</div>
+                </div>`;
+            return;
+        }
+
+        list.innerHTML = emailAccounts.map((a) => {
+            const id = escapeHtml(a.id);
+            return `
+            <div class="rounded-lg border border-white/10 bg-white/[0.025] p-4" data-account-id="${id}">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="min-w-0 truncate text-sm font-medium text-white">${escapeHtml(a.name || 'Unnamed account')}</div>
+                    ${a.is_default ? '<span class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[9px] uppercase tracking-wider text-cyan-300">Default</span>' : ''}
+                    ${a.is_active
+                        ? '<span class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[9px] uppercase tracking-wider text-emerald-300">Active</span>'
+                        : '<span class="rounded-full bg-white/5 px-2 py-0.5 text-[9px] uppercase tracking-wider text-white/30">Inactive</span>'}
+                </div>
+                <div class="mt-1 truncate text-xs text-white/50">${escapeHtml(a.email || '')}</div>
+
+                <div class="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                    <div class="rounded-md border border-white/5 bg-black/10 px-2 py-2">
+                        <div class="uppercase tracking-wider text-white/25">IMAP</div>
+                        <div class="mt-1 truncate text-white/50">${escapeHtml(a.imap_host || '-')}:${escapeHtml(a.imap_port || '-')}</div>
+                    </div>
+                    <div class="rounded-md border border-white/5 bg-black/10 px-2 py-2">
+                        <div class="uppercase tracking-wider text-white/25">SMTP</div>
+                        <div class="mt-1 truncate text-white/50">${escapeHtml(a.smtp_host || '-')}:${escapeHtml(a.smtp_port || '-')}</div>
+                    </div>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                    <button type="button" class="jc-btn jc-btn-sm" data-action="edit" data-id="${id}">Edit</button>
+                    ${a.is_default ? '' : `<button type="button" class="jc-btn jc-btn-sm" data-action="default" data-id="${id}">Make default</button>`}
+                    <button type="button" class="jc-btn jc-btn-sm jc-btn-danger" data-action="delete" data-id="${id}">Remove</button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // One delegated handler instead of re-binding after every render
+    $('jc-email-accounts-list')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const { action, id } = btn.dataset;
+
+        if (action === 'retry')   return loadEmailAccounts();
+        if (action === 'edit')    return openEmailForm(emailAccounts.find((a) => String(a.id) === String(id)));
+        if (action === 'default') return makeDefault(id, btn);
+        if (action === 'delete')  return deleteEmailAccount(id);
+    });
+
+    // ---------- form ----------
+
+    function hideTestResult() {
+        const result = $('jc-email-test-result');
+        if (!result) return;
+        result.className = 'hidden';
+        result.textContent = '';
+    }
+
+    function showTestResult(kind, text) {
+        const result = $('jc-email-test-result');
+        if (!result) return;
+        result.className = `jc-notice jc-notice-${kind}`;
+        result.textContent = text;
+    }
+
+    function openEmailForm(account = null) {
+        const form = $('jc-email-account-form');
+        if (!form) return;
+
+        clearInvalid(form);
+        hideTestResult();
+        form.classList.remove('hidden');
+
+        const editing = Boolean(account);
+        $('jc-email-form-title').textContent = editing ? 'Edit email account' : 'Add email account';
+        setVal('jc-email-id', editing ? account.id : '');
+
+        if (editing) {
+            setVal('jc-email-name', account.name || '');
+            setVal('jc-email-provider', detectPreset(account));
+            setVal('jc-email-address', account.email || '');
+            setVal('jc-email-imap-host', account.imap_host || '');
+            setVal('jc-email-imap-port', account.imap_port || 993);
+            setVal('jc-email-imap-encryption', account.imap_encryption || 'ssl');
+            setVal('jc-email-smtp-host', account.smtp_host || '');
+            setVal('jc-email-smtp-port', account.smtp_port || 465);
+            setVal('jc-email-smtp-encryption', account.smtp_encryption || 'ssl');
+            $('jc-email-active').checked = Boolean(account.is_active);
+            $('jc-email-default').checked = Boolean(account.is_default);
+            const hint = $('jc-email-provider-hint');
+            if (hint) hint.textContent = (PRESETS[detectPreset(account)] || PRESETS.custom).hint;
+            updateEncryptionWarning();
+        } else {
+            setVal('jc-email-name', '');
+            setVal('jc-email-provider', 'godaddy');
+            setVal('jc-email-address', '');
+            applyPreset('godaddy');
+            $('jc-email-active').checked = true;
+            $('jc-email-default').checked = emailAccounts.length === 0; // first account becomes the default
+        }
+
+        setVal('jc-email-password', '');
+        $('jc-email-password').type = 'password';
+        $('jc-email-pw-toggle').textContent = 'Show';
+        $('jc-email-pw-hint').textContent = editing
+            ? 'Leave blank to keep the saved password.'
+            : 'The password is encrypted before being stored.';
+        $('jc-email-password').placeholder = editing ? 'Unchanged' : 'Mailbox password';
+
+        form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        $('jc-email-name')?.focus();
+    }
+
+    function closeEmailForm() {
+        $('jc-email-account-form')?.classList.add('hidden');
+        setVal('jc-email-password', '');
+        setVal('jc-email-id', '');
+        hideTestResult();
+    }
+
+    $('jc-email-add')?.addEventListener('click', () => openEmailForm());
+    $('jc-email-cancel')?.addEventListener('click', closeEmailForm);
+
+    function readEmailForm() {
+        const email = $('jc-email-address')?.value.trim() || '';
+        const password = $('jc-email-password')?.value || '';
+        const id = $('jc-email-id')?.value || '';
+
+        const payload = {
+            name: $('jc-email-name')?.value.trim() || '',
+            email,
+            imap_host: $('jc-email-imap-host')?.value.trim() || '',
+            imap_port: parseInt($('jc-email-imap-port')?.value, 10),
+            imap_encryption: $('jc-email-imap-encryption')?.value,
+            imap_username: email,
+            smtp_host: $('jc-email-smtp-host')?.value.trim() || '',
+            smtp_port: parseInt($('jc-email-smtp-port')?.value, 10),
+            smtp_encryption: $('jc-email-smtp-encryption')?.value,
+            smtp_username: email,
+            is_active: $('jc-email-active')?.checked ? 1 : 0,
+            is_default: $('jc-email-default')?.checked ? 1 : 0,
+        };
+
+        // When editing, a blank password means "keep the stored one", so it is not sent at all
+        if (password) {
+            payload.imap_password = password;
+            payload.smtp_password = password;
+        }
+
+        return { id, payload, hasPassword: Boolean(password) };
+    }
+
+    function validateEmailForm({ id, payload, hasPassword }, { forTest = false } = {}) {
+        const form = $('jc-email-account-form');
+        clearInvalid(form);
+
+        const bad = (field, message) => {
+            markInvalid(field);
+            showStatus('✗ ' + message, true, 0);
+            $(field)?.focus();
+            return false;
+        };
+
+        const validPort = (p) => Number.isInteger(p) && p >= 1 && p <= 65535;
+
+        if (!forTest && !payload.name) return bad('jc-email-name', 'Account name is required.');
+        if (!payload.email) return bad('jc-email-address', 'Email address is required.');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) return bad('jc-email-address', 'Enter a valid email address.');
+        if (!id && !hasPassword) return bad('jc-email-password', 'Mailbox password is required.');
+        if (!payload.imap_host) return bad('jc-email-imap-host', 'IMAP host is required.');
+        if (!validPort(payload.imap_port)) return bad('jc-email-imap-port', 'IMAP port must be between 1 and 65535.');
+        if (!payload.smtp_host) return bad('jc-email-smtp-host', 'SMTP host is required.');
+        if (!validPort(payload.smtp_port)) return bad('jc-email-smtp-port', 'SMTP port must be between 1 and 65535.');
+
+        return true;
+    }
+
+    $('jc-email-test')?.addEventListener('click', async () => {
+        const button = $('jc-email-test');
+        const form = readEmailForm();
+        if (!validateEmailForm(form, { forTest: true })) return;
+
+        // For a saved account with no new password, ask the server to use the stored one
+        const body = form.id ? { ...form.payload, id: form.id } : form.payload;
+
+        setBusy(button, true, 'Testing...');
+        showTestResult('info', 'Testing IMAP and SMTP connection...');
+
+        try {
+            const data = await api('/jarvis/email-accounts/test', { method: 'POST', body });
+            showTestResult('ok', '✓ ' + (data.message || 'Email connection successful.'));
+        } catch (error) {
+            console.error('[Email Accounts] Test connection error:', error);
+            showTestResult('err', '✗ ' + friendlyError(error));
+        } finally {
+            setBusy(button, false);
+        }
+    });
+
+    $('jc-email-save')?.addEventListener('click', async () => {
+        const button = $('jc-email-save');
+        const form = readEmailForm();
+        if (!validateEmailForm(form)) return;
+
+        const editing = Boolean(form.id);
+        const url = editing ? `/jarvis/email-accounts/${encodeURIComponent(form.id)}` : '/jarvis/email-accounts';
+
+        setBusy(button, true, 'Saving...');
+
+        try {
+            await api(url, { method: editing ? 'PUT' : 'POST', body: form.payload });
+            closeEmailForm();
+            showStatus(editing ? '✓ Email account updated.' : '✓ Email account saved.');
+            await loadEmailAccounts();
+        } catch (error) {
+            console.error('[Email Accounts] Save error:', error);
+            showStatus('✗ ' + friendlyError(error), true, 0);
+        } finally {
+            setBusy(button, false);
+        }
+    });
+
+    async function makeDefault(id, button) {
+        const account = emailAccounts.find((a) => String(a.id) === String(id));
+        if (!account) return;
+
+        if (button) button.disabled = true;
+
+        try {
+            await api(`/jarvis/email-accounts/${encodeURIComponent(id)}`, {
+                method: 'PUT',
+                body: {
+                    name: account.name,
+                    email: account.email,
+                    imap_host: account.imap_host, imap_port: account.imap_port, imap_encryption: account.imap_encryption,
+                    imap_username: account.email,
+                    smtp_host: account.smtp_host, smtp_port: account.smtp_port, smtp_encryption: account.smtp_encryption,
+                    smtp_username: account.email,
+                    is_active: 1,
+                    is_default: 1,
+                },
+            });
+            showStatus('✓ Default account updated.');
+            await loadEmailAccounts();
+        } catch (error) {
+            console.error('[Email Accounts] Make default error:', error);
+            showStatus('✗ ' + friendlyError(error), true, 0);
+            if (button) button.disabled = false;
+        }
+    }
+
+    async function deleteEmailAccount(id) {
+        const account = emailAccounts.find((a) => String(a.id) === String(id));
+        if (!account) return;
+
+        if (!confirm(`Remove "${account.name}" (${account.email})?\n\nJC will no longer be able to use this mailbox.`)) return;
+
+        try {
+            await api(`/jarvis/email-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            if ($('jc-email-id')?.value === String(id)) closeEmailForm();
+            showStatus('✓ Email account removed.');
+            await loadEmailAccounts();
+        } catch (error) {
+            console.error('[Email Accounts] Delete error:', error);
+            showStatus('✗ ' + friendlyError(error), true, 0);
+        }
+    }
+
+    // =====================================================================
+    // DRAWER OPEN / CLOSE (focus handling, unsaved changes, Escape)
+    // =====================================================================
+
+    let isOpen = false;
+    let lastTrigger = null;
+
+    function openSettings(tabName) {
+        if (typeof tabName === 'string') activateTab(tabName);
+
+        lastTrigger = document.activeElement;
+        isOpen = true;
+
+        drawer.removeAttribute('inert');
+        drawer.classList.remove('translate-x-full');
+        drawer.setAttribute('aria-hidden', 'false');
+        backdrop?.classList.remove('hidden');
+
+        // Don't overwrite what the user is typing if the drawer is re-opened mid-edit
+        if (!isDirty()) loadSettings();
+        loadEmailAccounts();
+
+        setTimeout(() => $('jc-settings-close')?.focus(), 50);
+    }
+
+    function closeSettings({ force = false } = {}) {
+        if (!isOpen) return;
+
+        if (!force && isDirty() && !confirm('You have unsaved changes. Close without saving?')) return;
+
+        // Roll back any unsaved live wake-name preview
+        if (isDirty() && lastSettings) {
+            applyNames(lastSettings.ai_name, lastSettings.owner_name, lastSettings.wake_name_variants || []);
+            fillForm(lastSettings);
+        }
+
+        isOpen = false;
+        drawer.classList.add('translate-x-full');
+        drawer.setAttribute('aria-hidden', 'true');
+        drawer.setAttribute('inert', '');
+        backdrop?.classList.add('hidden');
+
+        setVal('jc-set-api-key', '');
+        if (lastTrigger && typeof lastTrigger.focus === 'function') lastTrigger.focus();
+    }
+
+    $('jc-settings-btn')?.addEventListener('click', () => openSettings());
+    $('jc-mailbox-chip')?.addEventListener('click', () => openSettings('email'));
+    $('jc-settings-close')?.addEventListener('click', () => closeSettings());
+    backdrop?.addEventListener('click', () => closeSettings());
+
+    document.addEventListener('keydown', (e) => {
+        if (!isOpen) return;
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeSettings();
+            return;
+        }
+
+        // Keep Tab inside the dialog
+        if (e.key === 'Tab') {
+            const focusable = Array.from(drawer.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )).filter((el) => el.offsetParent !== null);
+
+            if (!focusable.length) return;
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    });
+
+    window.addEventListener('beforeunload', (e) => {
+        if (isOpen && isDirty()) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    window.jcOpenSettings = openSettings;
+    window.jcCloseSettings = closeSettings;
+
+    // =====================================================================
+    // INITIAL LOAD: header chip and saved AI name without opening the drawer
+    // =====================================================================
+
+    function initialLoad() {
+        setTimeout(() => {
+            loadSettings();
+            loadEmailAccounts();
+        }, 500);
+    }
+
+    if (document.readyState === 'complete') initialLoad();
+    else window.addEventListener('load', initialLoad, { once: true });
 
     debugLog('Settings module initialized');
-
 })();
 </script>
 

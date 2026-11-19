@@ -10,6 +10,12 @@ use Stringable;
 
 class FindEmails implements Tool
 {
+    public function capabilityMetadata(): array
+    {
+        return ['category' => 'email', 'risk' => 'READ_ONLY', 'operations' => ['search'], 'configuration' => 'imap',
+            'permissions' => ['read_emails', 'search_emails'], 'requires_confirmation' => false];
+    }
+
     public function __construct(
         private GoDaddyEmailService $emailService
     ) {}
@@ -21,12 +27,12 @@ class FindEmails implements Tool
 
     public function handle(Request $request): Stringable|string
     {
-        $result = $this->emailService->findEmails(
-            query: $request['query'] ?? null,
-            from: $request['from'] ?? null,
-            date: $request['date'] ?? null,
-            limit: $request['limit'] ?? 20,
-        );
+        $arguments = ['query' => $request['query'] ?? null, 'from' => $request['from'] ?? null,
+            'date' => $request['date'] ?? null, 'limit' => $request['limit'] ?? 20];
+        if ($request['unread'] ?? false) {
+            $arguments['unread'] = true;
+        }
+        $result = $this->emailService->findEmails(...$arguments);
 
         return json_encode($result);
     }
@@ -34,6 +40,7 @@ class FindEmails implements Tool
     public function schema(JsonSchema $schema): array
     {
         return [
+            'unread' => $schema->boolean()->description('Only search unread messages when requested.')->default(false),
             'query' => $schema
                 ->string()
                 ->description(

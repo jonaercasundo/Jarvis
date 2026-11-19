@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\ApiConnection;
+use App\Models\EmailAccount;
 use App\Models\JarvisSetting;
 use App\Models\JarvisWorkflow;
+use App\Services\Workflow\WorkflowEmailReader;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -14,13 +17,17 @@ class JarvisWorkflowService
         private WorkflowDefinition $definition,
         private GoDaddyEmailService $emailService,
         private WorkflowHttpService $http,
+        private WorkflowEmailReader $workflowEmailReader,
+        private WorkflowAppExecutorRegistry $appExecutors,
     ) {}
 
     public function list(string $ownerKey): array
     {
         return JarvisWorkflow::query()
             ->where('owner_key', $ownerKey)
-            ->latest('updated_at')
+            ->orderByDesc('last_used_at')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->get()
             ->map(fn (JarvisWorkflow $workflow) => $this->publicData($workflow))
             ->all();
@@ -36,6 +43,7 @@ class JarvisWorkflowService
             'description' => $description,
             'workflow_data' => $data,
             'trigger_state' => [],
+            'last_used_at' => now(),
             'status' => 'draft',
         ]);
     }
@@ -48,10 +56,21 @@ class JarvisWorkflowService
             'name' => trim($name),
             'description' => $description,
             'workflow_data' => $data,
+            'last_used_at' => now(),
             'status' => 'draft',
             'webhook_secret' => null,
             'next_run_at' => null,
         ]);
+
+        return $workflow->fresh();
+    }
+
+    public function markAsLastUsed(JarvisWorkflow $workflow): JarvisWorkflow
+    {
+        JarvisWorkflow::withoutTimestamps(function () use ($workflow): void {
+            $workflow->last_used_at = now();
+            $workflow->save();
+        });
 
         return $workflow->fresh();
     }
@@ -61,23 +80,82 @@ class JarvisWorkflowService
         if ($workflow->status === 'active') {
             throw ValidationException::withMessages(['workflow' => 'This workflow is already active. Pause it before activating again.']);
         }
-        if ($workflow->status === 'error') {
+        if (in_array($workflow->status, ['error', 'invalid'], true)) {
             throw ValidationException::withMessages(['workflow' => 'Save the workflow again before activating it.']);
         }
 
         $data = $workflow->workflow_data ?? [];
         $this->definition->validate($data, forActivation: true);
+        $graph = new WorkflowGraph($data);
+        $analysisEnabled = in_array('analysis', JarvisSetting::current()->allowed_actions ?? [], true);
 
         $trigger = $this->triggerNode($workflow);
         $state = $workflow->trigger_state ?? [];
         $secret = null;
 
         foreach ($data['nodes'] as $node) {
+            if (($node['type'] ?? null) === 'app_action') {
+                $config = $node['config'] ?? [];
+                $app = strtolower((string) ($config['app'] ?? ''));
+                $action = strtolower((string) ($config['action'] ?? ''));
+                $supportedGmailRead = $app === 'gmail' && in_array($action, ['read', 'list_unread', 'list unread'], true);
+                $supportedEmailSend = in_array($app, ['gmail', 'email', 'outlook'], true)
+                    && in_array($action, ['send_email', 'send email', 'send'], true);
+                $supportedLiveAction = in_array($action, $this->appExecutors->capabilities()[$app]['actions'] ?? [], true);
+
+                if (! $supportedGmailRead && ! $supportedEmailSend && ! $supportedLiveAction) {
+                    throw ValidationException::withMessages(['workflow' => 'This app action has no live connector yet. Test runs use a mock connector; activation is blocked until a real connector is configured.']);
+                }
+                if ($supportedEmailSend && ! $this->emailService->canSendNewEmails()) {
+                    throw ValidationException::withMessages(['workflow' => 'Enable “Send new emails” in JARVIS Settings → Scope before activating this workflow.']);
+                }
+            }
             if (($node['type'] ?? null) === 'send_email' && ! $this->emailService->canSendNewEmails()) {
                 throw ValidationException::withMessages(['workflow' => 'Enable “Send new emails” in JARVIS Settings → Scope before activating this workflow.']);
             }
             if (($node['type'] ?? null) === 'jarvis_ai' && ! in_array('analysis', JarvisSetting::current()->allowed_actions ?? [], true)) {
                 throw ValidationException::withMessages(['workflow' => 'Enable AI analysis in JARVIS Settings → Scope before activating this workflow.']);
+            }
+            $requiresAgentReasoning = ($node['type'] ?? null) === 'ai_agent'
+                && ($node['config']['execution_mode'] ?? 'ai_assisted') !== 'deterministic';
+            $requiresOrchestratorRouting = ($node['type'] ?? null) === 'orchestrator'
+                && count($graph->connectedAgents((string) $node['id'])) > 1;
+            if (($requiresAgentReasoning || $requiresOrchestratorRouting) && ! $analysisEnabled) {
+                throw ValidationException::withMessages(['workflow' => 'Enable AI analysis before activating this workflow.']);
+            }
+            if (collect($data['nodes'] ?? [])->contains(fn (array $candidate): bool => ($candidate['type'] ?? null) === 'orchestrator') && ($node['type'] ?? null) === 'app_action') {
+                $config = $node['config'] ?? [];
+                $app = strtolower((string) ($config['app'] ?? ''));
+                $action = strtolower((string) ($config['action'] ?? ''));
+                if (! in_array($action, $this->appExecutors->capabilities()[$app]['actions'] ?? [], true)) {
+                    throw ValidationException::withMessages(['workflow' => 'This app action is not connected for workflow execution yet.']);
+                }
+
+                if (in_array($app, ['custom_api', 'outlook'], true)) {
+                    $values = $config['values'] ?? [];
+                    $connection = ApiConnection::query()->where('owner_key', $workflow->owner_key)
+                        ->whereKey($values['connection_id'] ?? $values['connection'] ?? 0)->first();
+                    if (! $connection && ($app !== 'outlook' || $action !== 'draft')) {
+                        throw ValidationException::withMessages(['workflow' => 'Choose an owned saved connection for this app.']);
+                    }
+                    if ($app === 'outlook' && $connection && parse_url($connection->base_url, PHP_URL_HOST) !== 'graph.microsoft.com') {
+                        throw ValidationException::withMessages(['workflow' => 'Choose a Microsoft Graph connection for Outlook.']);
+                    }
+
+                    continue;
+                }
+
+                $connectionId = $config['values']['connection'] ?? null;
+                if ($connectionId !== null && $connectionId !== '') {
+                    $account = is_numeric($connectionId)
+                        ? EmailAccount::query()->whereKey((int) $connectionId)->where('is_active', true)->first()
+                        : null;
+                    if (! $account || ! $this->workflowEmailReader->isConfigured((int) $account->id)) {
+                        throw ValidationException::withMessages(['workflow' => 'Choose an active, configured email mailbox for the Gmail step.']);
+                    }
+                } elseif (! $this->workflowEmailReader->isConfigured()) {
+                    throw ValidationException::withMessages(['workflow' => 'Connect a default mailbox before activating this workflow.']);
+                }
             }
             if (($node['type'] ?? null) === 'webhook_action') {
                 try {
@@ -169,6 +247,7 @@ class JarvisWorkflowService
         return $workflow->executions()
             ->latest('id')
             ->limit(min(max($limit, 1), 100))
+            ->with('steps')
             ->get()
             ->map(fn ($execution) => [
                 'id' => $execution->id,
@@ -179,6 +258,17 @@ class JarvisWorkflowService
                 'input_data' => $execution->input_data ?? [],
                 'output_data' => $execution->output_data ?? [],
                 'error_message' => $execution->error_message,
+                'steps' => $execution->steps->map(fn ($step) => [
+                    'node_id' => $step->node_id,
+                    'node_type' => $step->node_type,
+                    'execution_order' => $step->execution_order,
+                    'status' => $step->status,
+                    'input_data' => $step->input_data ?? [],
+                    'output_data' => $step->output_data ?? [],
+                    'error_message' => $step->error_message,
+                    'started_at' => $step->started_at?->toIso8601String(),
+                    'finished_at' => $step->finished_at?->toIso8601String(),
+                ])->all(),
             ])
             ->all();
     }
@@ -191,6 +281,7 @@ class JarvisWorkflowService
             'description' => $workflow->description,
             'workflow_data' => $workflow->workflow_data ?? ['nodes' => [], 'edges' => []],
             'status' => $workflow->status,
+            'last_used_at' => $workflow->last_used_at?->toIso8601String(),
             'last_run_at' => $workflow->last_run_at?->toIso8601String(),
             'next_run_at' => $workflow->next_run_at?->toIso8601String(),
             'has_webhook' => filled($workflow->webhook_secret),

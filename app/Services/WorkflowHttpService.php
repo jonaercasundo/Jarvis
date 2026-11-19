@@ -12,7 +12,8 @@ class WorkflowHttpService
     {
         $this->validateUrl($url);
 
-        $response = Http::timeout(12)
+        $response = Http::connectTimeout(5)
+            ->timeout(12)
             ->withOptions(['allow_redirects' => false])
             ->acceptJson()
             ->asJson()
@@ -42,6 +43,30 @@ class WorkflowHttpService
         }
 
         $this->assertPublicHost($parts['host']);
+    }
+
+    /** Pin verified DNS addresses so a subsequent DNS change cannot reach a private host. */
+    public function requestOptions(string $url): array
+    {
+        $this->validateUrl($url);
+        $parts = parse_url($url);
+        $host = $parts['host'];
+        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : array_values(array_filter(array_map(
+            fn (array $record): ?string => $record['ip'] ?? $record['ipv6'] ?? null,
+            dns_get_record($host, DNS_A | DNS_AAAA) ?: [],
+        )));
+        if ($addresses === []) {
+            throw new RuntimeException('JARVIS could not verify the API host.');
+        }
+        foreach ($addresses as $address) {
+            $this->assertPublicIp($address);
+        }
+        $address = $addresses[0];
+        $address = str_contains($address, ':') ? '['.$address.']' : $address;
+
+        return ['allow_redirects' => false, 'proxy' => '', 'curl' => [
+            CURLOPT_RESOLVE => [$host.':'.($parts['port'] ?? 443).':'.$address],
+        ]];
     }
 
     private function assertPublicHost(string $host): void
@@ -76,10 +101,13 @@ class WorkflowHttpService
         $public = filter_var(
             $address,
             FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE | FILTER_FLAG_GLOBAL_RANGE,
         );
 
-        if ($public === false) {
+        $packed = inet_pton($address);
+        $multicast = $packed !== false && ((strlen($packed) === 4 && ord($packed[0]) >= 224)
+            || (strlen($packed) === 16 && ord($packed[0]) === 255));
+        if ($public === false || $multicast) {
             throw new RuntimeException('Private and reserved webhook hosts are not allowed.');
         }
     }

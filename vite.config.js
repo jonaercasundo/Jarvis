@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
     plugins: [
         laravel({
-            input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/jarvis-workflows.js'],
+            input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/jarvis-workflows.js', 'resources/js/jarvis-avatar-3d.js'],
             refresh: true,
         }),
         tailwindcss(),

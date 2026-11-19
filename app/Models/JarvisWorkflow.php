@@ -13,6 +13,7 @@ class JarvisWorkflow extends Model
         'description',
         'workflow_data',
         'trigger_state',
+        'last_used_at',
         'status',
         'webhook_secret',
         'last_run_at',
@@ -26,6 +27,7 @@ class JarvisWorkflow extends Model
             'trigger_state' => 'array',
             'webhook_secret' => 'encrypted',
             'last_run_at' => 'datetime',
+            'last_used_at' => 'datetime',
             'next_run_at' => 'datetime',
         ];
     }
@@ -33,5 +35,10 @@ class JarvisWorkflow extends Model
     public function executions(): HasMany
     {
         return $this->hasMany(JarvisWorkflowExecution::class, 'workflow_id');
+    }
+
+    public function agentTasks(): HasMany
+    {
+        return $this->hasMany(WorkflowAgentTask::class, 'workflow_id');
     }
 }

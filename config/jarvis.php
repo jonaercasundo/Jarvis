@@ -3,6 +3,14 @@
 use App\Models\User;
 
 return [
+    'ai' => [
+        'key' => env('ANTHROPIC_API_KEY'),
+        'default_model' => 'claude-fable-5',
+        'models' => ['claude-fable-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'claude-opus-5-5'],
+        'max_tool_iterations' => 8,
+    ],
+    'test_mode' => env('JARVIS_TEST_MODE', false),
+
     // Any Notification::send()-compatible channels. Add 'mail' or a
     // custom Slack/SMS channel here once you decide on one.
     'notification_channels' => ['database', 'broadcast'],

@@ -11,6 +11,12 @@ use Stringable;
 
 class DeleteEmail implements Tool
 {
+    public function capabilityMetadata(): array
+    {
+        return ['category' => 'email', 'risk' => 'DESTRUCTIVE', 'operations' => ['stage_deletion'], 'intent_verbs' => ['delete', 'remove', 'trash'], 'configuration' => 'imap',
+            'permissions' => ['delete_emails'], 'requires_confirmation' => true];
+    }
+
     public function __construct(
         private GoDaddyEmailService $emailService
     ) {}

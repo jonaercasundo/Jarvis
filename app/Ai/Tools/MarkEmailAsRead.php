@@ -10,6 +10,12 @@ use Stringable;
 
 class MarkEmailAsRead implements Tool
 {
+    public function capabilityMetadata(): array
+    {
+        return ['category' => 'email', 'risk' => 'WRITE', 'operations' => ['mark_as_read'], 'intent_verbs' => ['mark'], 'configuration' => 'imap',
+            'permissions' => ['read_emails'], 'requires_confirmation' => false];
+    }
+
     public function __construct(
         private GoDaddyEmailService $emailService
     ) {}

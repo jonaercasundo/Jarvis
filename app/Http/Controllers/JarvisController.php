@@ -4,10 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Ai\Agents\JcAgent;
 use App\Models\JarvisCreditUsage;
+use App\Models\JarvisSetting;
 use App\Models\PendingEmailAction;
 use App\Models\User;
+use App\Services\ArtifactPresentationPlanner;
+use App\Services\CapabilityResponder;
+use App\Services\ConversationIntentResolver;
+use App\Services\ConversationResponsePresenter;
+use App\Services\Email\EmailStatusService;
 use App\Services\GoDaddyEmailService;
 use App\Services\JarvisCreditService;
+use App\Services\WorkflowAgentStatusService;
+use App\Services\WorkflowOperationsService;
+use App\Services\WorkflowOwner;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -106,7 +115,68 @@ class JarvisController extends Controller
 
     public function command(
         Request $request,
-        GoDaddyEmailService $emailService
+        EmailStatusService $emailStatusService,
+        ConversationResponsePresenter $presenter,
+        ?GoDaddyEmailService $emailService = null,
+    ): JsonResponse {
+        $request->validate([
+            'command' => ['required', 'string', 'max:2000'],
+            'conversation_id' => ['nullable', 'string', 'max:36'],
+            'clarification_id' => ['nullable', 'uuid'],
+        ]);
+        $resolver = app(ConversationIntentResolver::class);
+        $resolution = $resolver->resolve($request, trim($request->input('command')));
+        $request->attributes->set('jarvis_resolved_command', $resolution['command']);
+        if ($resolution['response'] !== null) {
+            $response = response()->json(['conversation_id' => $request->input('conversation_id'), ...$resolution['response']]);
+        } else {
+            $response = $this->executeCommand($request, $emailStatusService, $emailService, $resolution['command']);
+        }
+        if ($question = $request->attributes->get('jarvis_agent_clarification')) {
+            $data = $response->getData(true);
+            $response = response()->json([...array_intersect_key($data, array_flip(['conversation_id', 'credit', 'ai_usage', 'wake_name_variants'])), ...$question]);
+        }
+        $data = $response->getData(true);
+        if (($data['type'] ?? '') === 'email_status' && ($data['success'] ?? false) && ($data['configured'] ?? false)
+            && $request->attributes->get('jarvis_response_depth') === 'concise' && isset($data['analyzed_count'])) {
+            $attentionCount = $data['critical_count'] + $data['action_required_count'] + $data['important_count'];
+            $data['response'] = $attentionCount.' analyzed unread message'.($attentionCount === 1 ? '' : 's').' need'.($attentionCount === 1 ? 's' : '').' attention.';
+            if ($data['critical_count'] > 0) {
+                $data['response'] .= ' '.$data['critical_count'].' '.($data['critical_count'] === 1 ? 'is' : 'are').' urgent.';
+            } elseif (($data['not_analyzed_count'] ?? 0) === 0) {
+                $data['response'] .= ' Nothing appears immediately urgent.';
+            }
+            if (($data['not_analyzed_count'] ?? 0) > 0) {
+                $data['response'] .= ' Some unread messages have not been analyzed yet.';
+            }
+            $response = response()->json($data, $response->getStatusCode());
+        }
+        if ($request->attributes->get('jarvis_email_focus') === 'needs_reply' && ($data['type'] ?? '') === 'email_status'
+            && ($data['success'] ?? false) && ($data['configured'] ?? false)) {
+            $data['items'] = array_values(array_filter($data['items'] ?? [], fn (array $item): bool => preg_match('/\b(?:reply|respond)\b/i', $item['action'] ?? '') === 1));
+            $data['response'] = count($data['items']).' displayed message'.(count($data['items']) === 1 ? '' : 's').' may need a reply.';
+            if (($data['not_analyzed_count'] ?? 0) > 0) {
+                $data['response'] .= ' Some unread messages have not been analyzed yet.';
+            }
+            $response = response()->json($data, $response->getStatusCode());
+        }
+        $data = $presenter->present($response->getData(true), $request->attributes->get('jarvis_response_depth', 'concise'));
+        if (($data['display']['type'] ?? '') === 'confirmation') {
+            $request->session()->put('jarvis_draft_reviews.'.$data['display']['draft']['confirmation_code'], [
+                'owner_key' => app(WorkflowOwner::class)->key($request), 'conversation_id' => $data['conversation_id'] ?? null,
+            ]);
+        }
+        $response->setData($data);
+        $resolver->rememberResult($request, $data);
+
+        return $response;
+    }
+
+    private function executeCommand(
+        Request $request,
+        EmailStatusService $emailStatusService,
+        ?GoDaddyEmailService $emailService,
+        string $resolvedCommand,
     ): JsonResponse {
         $validated = $request->validate([
             'command' => ['required', 'string', 'max:2000'],
@@ -114,7 +184,7 @@ class JarvisController extends Controller
             'email_uid' => ['nullable'],
         ]);
 
-        $command = trim($validated['command']);
+        $command = $resolvedCommand;
         $conversationId = $validated['conversation_id'] ?? null;
         $emailUid = $validated['email_uid'] ?? null;
 
@@ -137,11 +207,44 @@ class JarvisController extends Controller
             *   "confirm"
             *   "send it"
             */
+            $capabilityResponse = $request->attributes->get('jarvis_explanation_only') ? null
+                : app(CapabilityResponder::class)->respond($request, $command, $emailService);
+            if ($capabilityResponse !== null) {
+                return response()->json($capabilityResponse);
+            }
+            if (preg_match('/^cancel\s+([A-Z0-9]{6})$/i', $command, $cancel)) {
+                $token = strtoupper($cancel[1]);
+                $review = $request->session()->get('jarvis_draft_reviews.'.$token);
+                if (! is_array($review) || ($review['owner_key'] ?? null) !== app(WorkflowOwner::class)->key($request)
+                    || ($review['conversation_id'] ?? null) !== $request->input('conversation_id')) {
+                    return response()->json(['success' => false, 'error' => 'No pending draft found for this conversation.'], 404);
+                }
+                $cancelled = PendingEmailAction::actionable()->where('token', $token)->update(['status' => 'cancelled']);
+                $request->session()->forget('jarvis_draft_reviews.'.$token);
+
+                return $cancelled ? response()->json(['success' => true, 'type' => 'confirmation', 'response' => 'Cancelled. The email has not been sent.'])
+                    : response()->json(['success' => false, 'error' => 'That draft is no longer pending.'], 404);
+            }
             if ($tokens = $this->extractConfirmationTokens($command)) {
+                $emailService ??= app(GoDaddyEmailService::class);
+
                 return $this->confirmPendingActions(
                     $tokens,
                     $emailService
                 );
+            }
+
+            if (in_array($request->attributes->get('jarvis_email_focus'), ['important', 'important_unread', 'needs_reply'], true) || $this->isEmailStatusIntent($command)) {
+                return $this->handleEmailStatusIntent($emailStatusService);
+            }
+
+            $emailService ??= app(GoDaddyEmailService::class);
+
+            if ($this->hasEmailSearchFilters($command) && $this->isEmailIntent($command)) {
+                return $this->handleFilteredEmailIntent($command, $emailService);
+            }
+            if ($this->isUnreadEmailIntent($command)) {
+                return $this->handleUnreadEmailIntent($emailService);
             }
 
             /*
@@ -175,7 +278,8 @@ class JarvisController extends Controller
             return $this->handleAgentCommand(
                 $command,
                 $emailService,
-                $conversationId
+                $conversationId,
+                $request,
             );
 
         } catch (Throwable $e) {
@@ -336,6 +440,135 @@ class JarvisController extends Controller
         ) === 1;
 
         return $latestEmailQuestion || $newEmailQuestion;
+    }
+
+    private function isUnreadEmailIntent(string $command): bool
+    {
+        return preg_match('/\b(?:unread|new)\s+(?:emails?|mails?)\b/i', $command) === 1;
+    }
+
+    private function hasEmailSearchFilters(string $command): bool
+    {
+        return preg_match('/\b(?:from|about|today|on\s+\d{4}-\d{2}-\d{2})\b/i', $command) === 1;
+    }
+
+    private function handleFilteredEmailIntent(string $command, GoDaddyEmailService $emailService): JsonResponse
+    {
+        preg_match('/\bfrom\s+(.+?)(?=\s+(?:about|today|on\s+\d{4}-\d{2}-\d{2})\b|[.!?]*$)/i', $command, $sender);
+        preg_match('/\babout\s+(.+?)(?=\s+(?:from|today|on\s+\d{4}-\d{2}-\d{2})\b|[.!?]*$)/i', $command, $query);
+        preg_match('/\bon\s+(\d{4}-\d{2}-\d{2})\b/i', $command, $date);
+        $arguments = ['query' => isset($query[1]) ? trim($query[1], ' .!?') : null,
+            'from' => isset($sender[1]) ? trim($sender[1], ' .!?') : null,
+            'date' => $date[1] ?? (preg_match('/\btoday\b/i', $command) ? now()->toDateString() : null), 'limit' => 20];
+        if ($this->isUnreadEmailIntent($command)) {
+            $arguments['unread'] = true;
+        }
+        $result = $emailService->findEmails(...$arguments);
+        if (! ($result['success'] ?? false)) {
+            return response()->json(['success' => false, 'error' => $result['error'] ?? 'I could not search your email.'], 403);
+        }
+        $emails = array_values($result['emails'] ?? []);
+
+        return response()->json(['success' => true, 'type' => 'email', 'emails' => $emails,
+            'response' => count($emails).' matching message'.(count($emails) === 1 ? '' : 's').' in the recent emails checked.']);
+    }
+
+    private function isEmailStatusIntent(string $command): bool
+    {
+        $command = trim($command);
+
+        return preg_match('/\b(?:email|inbox|mail)\s+status\b|\bstatus\s+(?:of|for)\s+(?:my\s+)?(?:email|inbox|mail)\b/i', $command) === 1
+            || preg_match('/^\s*(?:show|list|check)\b.*\b(?:important|urgent)\b.*\b(?:emails?|inbox|mail)\b/i', $command) === 1
+            || preg_match('/\b(?:anything|anything important|anything urgent)\b.*\b(?:email|inbox|mail)\b|\b(?:email|inbox|mail)\b.*\b(?:important|urgent)\b/i', $command) === 1
+            || preg_match('/\bdo\s+i\s+have\s+anything\s+(?:important|urgent)\b/i', $command) === 1
+            || preg_match('/\bdo\s+i\s+need\s+to\s+check\s+(?:my\s+)?(?:email|inbox|mail)\b/i', $command) === 1
+            || preg_match('/\bis\s+there\s+anything\s+i\s+need\s+to\s+respond\s+to\b/i', $command) === 1
+            || preg_match('/\bwhat\s+needs\s+my\s+attention\b|\bwhat\s+happened\s+in\s+my\s+inbox\b/i', $command) === 1;
+    }
+
+    private function handleEmailStatusIntent(EmailStatusService $emailStatusService): JsonResponse
+    {
+        try {
+            $status = $emailStatusService->summarize(self::DEFAULT_EMAIL_LIMIT);
+
+            return response()->json([
+                'success' => true,
+                'type' => 'email_status',
+                'response' => $status['summary'],
+                ...$status,
+            ]);
+        } catch (Throwable $exception) {
+            Log::warning('JC email status check failed', [
+                'exception' => $exception,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'type' => 'email_status',
+                'error' => 'I could not analyze your inbox status right now. Please try again shortly.',
+            ], 503);
+        }
+    }
+
+    private function handleUnreadEmailIntent(GoDaddyEmailService $emailService): JsonResponse
+    {
+        if (! $emailService->isConfigured()) {
+            return response()->json([
+                'success' => true,
+                'type' => 'email',
+                'response' => 'Your email account is not set up yet. Add it in Settings under Email.',
+                'emails' => [],
+            ]);
+        }
+
+        $result = $emailService->unreadEmails(self::DEFAULT_EMAIL_LIMIT);
+
+        if (! ($result['success'] ?? false)) {
+            return response()->json([
+                'success' => false,
+                'error' => $result['error'] ?? 'I could not check your unread emails.',
+            ], 403);
+        }
+
+        $emails = $result['emails'] ?? [];
+        $count = count($emails);
+
+        if ($count === 0) {
+            return response()->json([
+                'success' => true,
+                'type' => 'email',
+                'response' => 'You do not have any unread emails.',
+                'emails' => [],
+            ]);
+        }
+
+        $highlights = array_map(
+            static function (array $email): string {
+                $sender = $email['from_name'] ?? $email['from'] ?? 'an unknown sender';
+                $subject = $email['subject'] ?? '(no subject)';
+
+                return "From {$sender}, subject {$subject}.";
+            },
+            array_slice($emails, 0, 3),
+        );
+
+        $response = sprintf(
+            'You have %d unread email%s. %s',
+            $count,
+            $count === 1 ? '' : 's',
+            implode(' ', $highlights),
+        );
+
+        if ($count > count($highlights)) {
+            $response .= sprintf(' And %d more.', $count - count($highlights));
+        }
+
+        return response()->json([
+            'success' => true,
+            'type' => 'email',
+            'response' => $response,
+            'emails' => $emails,
+        ]);
     }
 
     private function handleEmailIntent(
@@ -539,9 +772,25 @@ class JarvisController extends Controller
     private function handleAgentCommand(
         string $command,
         GoDaddyEmailService $emailService,
-        ?string $conversationId = null
+        ?string $conversationId = null,
+        ?Request $request = null,
     ): JsonResponse {
-        $agent = new JcAgent($emailService);
+        $settings = JarvisSetting::current();
+
+        $artifactPlanner = new ArtifactPresentationPlanner;
+        $agent = new JcAgent(
+            $emailService,
+            $settings->ai_name ?: 'JC',
+            $settings->learned_memory ?? '',
+            agentStatusService: app(WorkflowAgentStatusService::class),
+            workflowOwnerKey: $request ? app(WorkflowOwner::class)->key($request) : null,
+            artifactPlanner: $artifactPlanner,
+            userPrompt: $command,
+            settings: $settings,
+            responseDepth: $request?->attributes->get('jarvis_response_depth', 'concise') ?? 'concise',
+            taskContext: $request?->attributes->get('jarvis_task_context', []) ?? [],
+            explanationOnly: (bool) $request?->attributes->get('jarvis_explanation_only', false),
+        );
 
         // JARVIS uses a dedicated internal participant.
         // This is not a login/authentication system.
@@ -562,7 +811,8 @@ class JarvisController extends Controller
                 ->prompt(
                     $command,
                     provider: 'anthropic',
-                    model: 'claude-sonnet-5',
+                    model: config('jarvis.ai.default_model', 'claude-fable-5'),
+                    timeout: 30,
                 );
         } else {
             $response = $agent
@@ -570,16 +820,17 @@ class JarvisController extends Controller
                 ->prompt(
                     $command,
                     provider: 'anthropic',
-                    model: 'claude-sonnet-5',
+                    model: config('jarvis.ai.default_model', 'claude-fable-5'),
+                    timeout: 30,
                 );
         }
 
         /*
-        * Laravel AI SDK provides the actual provider token usage.
-        *
-        * Actual tokens = input + output tokens
-        * Dashboard credits = actual tokens × 2
-        */
+         * Laravel AI SDK provides the actual provider token usage.
+         *
+         * Actual tokens = input + output tokens
+         * Dashboard credits = actual tokens × 2
+         */
         $inputTokens = (int) $response->usage->inputTokens;
         $outputTokens = (int) $response->usage->outputTokens;
         $actualTokens = $inputTokens + $outputTokens;
@@ -603,13 +854,48 @@ class JarvisController extends Controller
             $creditLimit - $usedCredits
         );
 
+        $responseText = (string) $response->text;
+        $operationsResult = null;
+        if (app(WorkflowOperationsService::class)->supportsRequest($command)) {
+            foreach ($response->toolResults as $toolResult) {
+                if ($toolResult->name === 'AskOperationsAgent') {
+                    $operationsResult = is_string($toolResult->result) ? json_decode($toolResult->result, true) : $toolResult->result;
+                }
+            }
+            if ($operationsResult === null && $artifactPlanner->retrievedData() === []
+                && (app(WorkflowOperationsService::class)->isProjectStatusRequest($command)
+                    || $request?->attributes->has('jarvis_operations_project'))
+                && ! $request?->attributes->has('jarvis_agent_clarification')) {
+                foreach ($agent->tools() as $tool) {
+                    if ($tool->name() === 'AskOperationsAgent') {
+                        $operationsResult = json_decode((string) $tool->handle(new \Laravel\Ai\Tools\Request(['request' => $command])), true);
+                        if (($operationsResult['success'] ?? false) === true) {
+                            $responseText = (string) $operationsResult['summary'];
+                        }
+                        break;
+                    }
+                }
+            }
+            if (is_array($operationsResult) && ($operationsResult['success'] ?? true) === false) {
+                $responseText = app(WorkflowOperationsService::class)->failureMessage($operationsResult);
+            }
+        }
+
+        if ($artifactPlanner->reportFailed()) {
+            $responseText = app(ConversationResponsePresenter::class)->omitArtifactFailure($responseText, $command);
+        }
+
         return response()->json([
             'success' => true,
             'type' => 'ai_response',
 
-            'response' => (string) $response->text,
+            'response' => $responseText,
+            'artifacts' => $artifactPlanner->artifacts(),
+            'artifact' => ($operationsResult['success'] ?? true) ? $artifactPlanner->visualReport() : null,
+            ...$artifactPlanner->visualResponse(),
 
             'conversation_id' => $response->conversationId,
+            'wake_name_variants' => JarvisSetting::current()->wake_name_variants ?? [],
 
             'credit' => [
                 'limit' => $creditLimit,

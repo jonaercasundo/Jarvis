@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cookie;
 
 class WorkflowOwner
 {
@@ -13,6 +14,13 @@ class WorkflowOwner
             return 'user:'.$userId;
         }
 
-        return 'session:'.$request->session()->getId();
+        $ownerId = $request->cookie('jarvis_workflow_owner');
+
+        if (! is_string($ownerId) || ! preg_match('/^[A-Za-z0-9_-]{16,128}$/D', $ownerId)) {
+            $ownerId = $request->session()->getId();
+            Cookie::queue(Cookie::forever('jarvis_workflow_owner', $ownerId));
+        }
+
+        return 'session:'.$ownerId;
     }
 }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class JarvisWorkflowExecution extends Model
 {
@@ -31,5 +32,15 @@ class JarvisWorkflowExecution extends Model
     public function workflow(): BelongsTo
     {
         return $this->belongsTo(JarvisWorkflow::class, 'workflow_id');
+    }
+
+    public function steps(): HasMany
+    {
+        return $this->hasMany(JarvisWorkflowExecutionStep::class, 'execution_id')->orderBy('execution_order');
+    }
+
+    public function agentTasks(): HasMany
+    {
+        return $this->hasMany(WorkflowAgentTask::class, 'execution_id');
     }
 }

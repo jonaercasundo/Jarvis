@@ -38,8 +38,9 @@ class JarvisCreditService
 
         $usdPhpRate = $this->forex->usdToPhpRate();
 
-        $jarvisPhpBalance =
-            $jarvisUsdBalance * $usdPhpRate;
+        $jarvisPhpBalance = $usdPhpRate === null
+            ? null
+            : $jarvisUsdBalance * $usdPhpRate;
 
         return [
             'actual_usd_balance' => round(
@@ -56,12 +57,11 @@ class JarvisCreditService
 
             'usd_php_rate' => $usdPhpRate,
 
-            'jarvis_php_balance' => round(
-                $jarvisPhpBalance,
-                2
-            ),
+            'jarvis_php_balance' => $jarvisPhpBalance === null
+                ? null
+                : round($jarvisPhpBalance, 2),
 
-            'currency' => 'PHP',
+            'currency' => $usdPhpRate === null ? null : 'PHP',
 
             'last_synced_at' => $billing->last_synced_at?->toIso8601String(),
 

@@ -26,9 +26,13 @@ class JarvisSettingsController extends Controller
             'allowed_actions.*' => 'in:read_emails,search_emails,draft_replies,send_replies,send_emails,analysis',
             'confirm_before_send' => 'boolean',
             'tone' => 'in:professional,friendly,concise,formal',
+            'capability_demonstrations' => 'sometimes|in:ask_first,automatic_safe_demo,never_demo',
             'daily_credit_limit' => 'integer|min:0',
             'scope_of_work' => 'nullable|string|max:2000',
             'limitations' => 'nullable|string|max:2000',
+            'learned_memory' => 'nullable|string|max:4000',
+            'wake_name_variants' => 'nullable|array|max:12',
+            'wake_name_variants.*' => 'required|string|max:30',
 
             // Email settings
             'email_address' => 'nullable|email|max:255',

@@ -2,93 +2,89 @@
 
 namespace App\Console\Commands;
 
-use App\Services\EmailAiService;
-use App\Services\GoDaddyEmailService;
+use App\Services\Email\EmailAnalyzer;
+use App\Services\Email\EmailManager;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class MonitorEmails extends Command
 {
     protected $signature = 'jarvis:monitor-emails';
 
-    protected $description = 'Monitor the GoDaddy mailbox for new emails';
+    protected $description = 'Monitor the configured email provider for unread messages';
 
-    public function handle(
-        GoDaddyEmailService $emailService,
-        EmailAiService $aiService
-    ): int {
-        if (! $emailService->isConfigured()) {
-            $this->info('Email is not configured; skipping email monitor.');
+    public function handle(EmailManager $emailManager, EmailAnalyzer $analyzer): int
+    {
+        try {
+            $provider = $emailManager->provider();
 
-            return self::SUCCESS;
-        }
+            if (! $provider->isConfigured()) {
+                $this->info('Email provider is not configured; skipping email monitor.');
 
-        $result = $emailService->latestEmails(1);
+                return self::SUCCESS;
+            }
 
-        if (! $result['success']) {
-            $this->error('Unable to check mailbox.');
+            $email = $provider->getUnreadMessages(1)[0] ?? null;
 
-            return self::FAILURE;
-        }
+            if (! $email) {
+                $this->line('No unread email found.');
 
-        $email = $result['emails'][0] ?? null;
+                return self::SUCCESS;
+            }
 
-        if (! $email) {
-            $this->line('No emails found.');
+            $cacheKey = 'jarvis.last_email_message.'.hash('sha256', $email->provider.'|'.$email->account);
+            $lastMessageId = Cache::get($cacheKey);
 
-            return self::SUCCESS;
-        }
+            if ($lastMessageId === null) {
+                Cache::forever($cacheKey, $email->messageId);
+                $this->info('Email monitor initialized for the configured mailbox.');
 
-        $lastUid = cache('jarvis.last_email_uid');
+                return self::SUCCESS;
+            }
 
-        if ($lastUid === null) {
-            cache()->forever('jarvis.last_email_uid', $email['uid']);
+            if ($lastMessageId === $email->messageId) {
+                $this->line('No new unread email.');
 
-            $this->info("Initialized at UID {$email['uid']}.");
+                return self::SUCCESS;
+            }
 
-            return self::SUCCESS;
-        }
+            Cache::forever($cacheKey, $email->messageId);
+            $analysis = $analyzer->analyze($email);
 
-        if ((int) $email['uid'] > (int) $lastUid) {
-            cache()->forever('jarvis.last_email_uid', $email['uid']);
-
-            $this->info("NEW EMAIL: UID {$email['uid']}");
-            $this->line("From: {$email['from']}");
-            $this->line("Subject: {$email['subject']}");
-
-            $fullEmail = $emailService->getEmail((int) $email['uid']);
-
-            if (! $fullEmail['success']) {
-                $this->error('Unable to read the new email.');
+            if (! ($analysis['success'] ?? false)) {
+                Log::warning('JARVIS monitor could not analyze email', [
+                    'provider' => $email->provider,
+                    'account' => $email->account,
+                    'message_id' => $email->messageId,
+                    'error' => $analysis['error'] ?? 'unknown error',
+                ]);
 
                 return self::FAILURE;
             }
 
-            $analysis = $aiService->analyze(
-                $fullEmail['message']
-            );
             cache()->put(
                 'jarvis.new_email',
                 [
-                    'uid' => $email['uid'],
-                    'from' => $email['from'],
-                    'from_name' => $email['from_name'],
-                    'subject' => $email['subject'],
-                    'analysis' => $analysis['analysis'] ?? [],
+                    'provider' => $email->provider,
+                    'account' => $email->account,
+                    'message_id' => $email->messageId,
+                    'from' => $email->from,
+                    'subject' => $email->subject,
+                    'analysis' => $analysis['analysis'],
                 ],
-                now()->addHours(24)
+                now()->addHours(24),
             );
-            $this->newLine();
-            $this->info('JARVIS ANALYSIS');
-            $this->line(json_encode(
-                $analysis,
-                JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
-            ));
+
+            $this->info('New unread email analyzed.');
 
             return self::SUCCESS;
+        } catch (Throwable $exception) {
+            Log::error('JARVIS email monitor failed', ['exception' => $exception]);
+            $this->error('Unable to monitor email provider.');
+
+            return self::FAILURE;
         }
-
-        $this->line('No new email.');
-
-        return self::SUCCESS;
     }
 }

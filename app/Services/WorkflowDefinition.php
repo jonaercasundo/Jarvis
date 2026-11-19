@@ -24,6 +24,7 @@ class WorkflowDefinition
 
         $byId = [];
         $triggers = [];
+        $orchestrators = [];
 
         foreach ($nodes as $node) {
             if (! is_array($node)) {
@@ -62,6 +63,9 @@ class WorkflowDefinition
             if ($this->catalog->isTrigger($type)) {
                 $triggers[] = $id;
             }
+            if ($type === 'orchestrator') {
+                $orchestrators[] = $id;
+            }
 
             $this->validateNode($node, $forActivation);
         }
@@ -69,10 +73,14 @@ class WorkflowDefinition
         if (count($triggers) > 1) {
             $this->fail('Use one trigger at the start of each workflow.');
         }
+        if (count($orchestrators) > 1) {
+            $this->fail('Use one Orchestrator in each workflow.');
+        }
 
         $incoming = array_fill_keys(array_keys($byId), 0);
         $adjacency = array_fill_keys(array_keys($byId), []);
         $edgeKeys = [];
+        $edgeIds = [];
 
         foreach ($edges as $edge) {
             if (! is_array($edge)) {
@@ -89,6 +97,23 @@ class WorkflowDefinition
             if ($this->catalog->isTrigger($byId[$target]['type'])) {
                 $this->fail('Trigger steps must come before action steps.');
             }
+
+            if (isset($edge['id'])) {
+                if (! is_string($edge['id']) || ! preg_match('/^[a-zA-Z0-9_-]{1,100}$/', $edge['id']) || isset($edgeIds[$edge['id']])) {
+                    $this->fail('Connections must have unique, valid IDs.');
+                }
+                $edgeIds[$edge['id']] = true;
+            }
+
+            $edgeType = $edge['edge_type'] ?? $this->inferEdgeType($byId[$source]['type'], $byId[$target]['type']);
+            if (! is_string($edgeType) || ! in_array($edgeType, ['routing', 'agent_capability', 'data_flow', 'control_flow', 'trigger_flow', 'conditional_flow'], true)) {
+                $this->fail('Choose a supported connection type.');
+            }
+            if (! $this->connectionTypeAllowed($edgeType, $byId[$source]['type'], $byId[$target]['type'])) {
+                $this->fail('This connection type is not supported between these steps.');
+            }
+
+            $this->validateEdgeConfig($edge['config'] ?? []);
 
             $edgeKey = $source.'>'.$target;
             if (isset($edgeKeys[$edgeKey])) {
@@ -144,6 +169,7 @@ class WorkflowDefinition
             if (count($reachable) !== count($byId)) {
                 $this->fail('Connect every step to the trigger before activating.');
             }
+
         }
     }
 
@@ -152,6 +178,10 @@ class WorkflowDefinition
     {
         $config = $node['config'] ?? [];
         $type = $node['type'];
+
+        if ($this->containsCredentialKey($config)) {
+            $this->fail('Store credentials in JARVIS Settings and reference a saved connection.');
+        }
 
         if ($type === 'schedule_trigger') {
             if (! in_array($config['frequency'] ?? 'daily', ['hourly', 'daily', 'weekly'], true)) {
@@ -179,6 +209,39 @@ class WorkflowDefinition
             }
         }
 
+        if ($type === 'condition') {
+            $field = $config['field'] ?? '';
+            $operator = $config['operator'] ?? 'not_empty';
+            if (! is_string($field) || mb_strlen($field) > 120 || ($forActivation && trim($field) === '')
+                || ! in_array($operator, ['exists', 'not_empty', 'equals', 'not_equals', 'greater_than'], true)) {
+                $this->fail('Configure a supported condition field and comparison.');
+            }
+            if (in_array($operator, ['equals', 'not_equals', 'greater_than'], true)
+                && (! is_scalar($config['value'] ?? null) || (string) $config['value'] === '')) {
+                $this->fail('Add a comparison value for this condition.');
+            }
+        }
+
+        if ($type === 'transform') {
+            $mappings = $config['mappings'] ?? [];
+            if (! is_array($mappings) || count($mappings) > 30) {
+                $this->fail('Add no more than 30 fields to a transform.');
+            }
+            foreach ($mappings as $target => $source) {
+                if (! is_string($target) || ! preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/', $target)
+                    || ! is_string($source) || trim($source) === '' || mb_strlen($source) > 160) {
+                    $this->fail('Transforms need a valid output field and source path for every mapping.');
+                }
+            }
+            if ($forActivation && $mappings === []) {
+                $this->fail('Add at least one field mapping before activating the workflow.');
+            }
+        }
+
+        if ($type === 'manual_trigger' && $forActivation) {
+            $this->fail('Manual test triggers cannot be activated. Add a schedule, email, or webhook trigger.');
+        }
+
         if ($type === 'jarvis_ai') {
             $instruction = $config['instruction'] ?? '';
             if (! is_string($instruction) || ($forActivation && trim($instruction) === '') || mb_strlen($instruction) > 5000) {
@@ -194,6 +257,42 @@ class WorkflowDefinition
                 if (! is_string($field) || ! preg_match('/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/', $field)) {
                     $this->fail('Output field names can use letters, numbers, and underscores.');
                 }
+            }
+        }
+
+        if (in_array($type, ['ai_agent', 'orchestrator'], true)) {
+            if (isset($config['model']) && (! is_string($config['model']) || strlen($config['model']) > 100)) {
+                $this->fail('Choose a valid AI model or use JARVIS Default.');
+            }
+            if (isset($config['permissions'])) {
+                if (! is_array($config['permissions']) || array_diff(array_keys($config['permissions']), array_keys(WorkflowAgentRuntime::DEFAULT_PERMISSIONS)) !== []) {
+                    $this->fail('Choose supported Agent permissions.');
+                }
+                foreach ($config['permissions'] as $permission) {
+                    if (! is_bool($permission)) {
+                        $this->fail('Agent permissions must be checked or unchecked.');
+                    }
+                }
+            }
+            if (isset($config['require_approval']) && ! is_bool($config['require_approval'])) {
+                $this->fail('The Agent confirmation policy must be checked or unchecked.');
+            }
+        }
+
+        if ($type === 'ai_agent') {
+            $executionMode = $config['execution_mode'] ?? 'ai_assisted';
+            if (! in_array($executionMode, ['ai_assisted', 'deterministic'], true)) {
+                $this->fail('Choose Autonomous reasoning or Fixed actions for the Agent.');
+            }
+            $instruction = $config['instruction'] ?? '';
+            if (! is_string($instruction) || mb_strlen($instruction) > 5000 || ($forActivation && $executionMode === 'ai_assisted' && trim($instruction) === '')) {
+                $this->fail('Describe what this Agent should do before activating Autonomous reasoning.');
+            }
+            if (isset($config['task_type']) && (! is_string($config['task_type']) || ! preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/', $config['task_type']))) {
+                $this->fail('Agent task types must use letters, numbers, dashes, or underscores.');
+            }
+            if (isset($config['priority']) && (! is_numeric($config['priority']) || (int) $config['priority'] < 1 || (int) $config['priority'] > 100)) {
+                $this->fail('Agent task priority must be between 1 and 100.');
             }
         }
 
@@ -221,6 +320,101 @@ class WorkflowDefinition
             }
             if (! in_array(strtoupper($config['method'] ?? 'POST'), ['POST', 'PUT', 'PATCH'], true)) {
                 $this->fail('Webhook actions support POST, PUT, or PATCH.');
+            }
+        }
+    }
+
+    private function containsCredentialKey(array $values): bool
+    {
+        foreach ($values as $key => $value) {
+            if (is_string($key) && preg_match('/(?:password|secret|token|api[_-]?key|credential|authorization|metabase.session)/i', $key)) {
+                return true;
+            }
+
+            if (is_array($value) && $this->containsCredentialKey($value)) {
+                return true;
+            }
+            if (is_string($value)) {
+                if (preg_match('/(?:authorization|cookie|password|secret|token|api[_-]?key|metabase.session)\s*["\x27]?\s*[:=]/i', $value)) {
+                    return true;
+                }
+                $decoded = json_decode($value, true);
+                if (is_array($decoded) && $this->containsCredentialKey($decoded)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function inferEdgeType(string $sourceType, string $targetType): string
+    {
+        if ($sourceType === 'orchestrator' && $targetType === 'ai_agent') {
+            return 'routing';
+        }
+        if ($sourceType === 'ai_agent' && ! $this->catalog->isTrigger($targetType)) {
+            return 'agent_capability';
+        }
+        if ($this->catalog->isTrigger($sourceType)) {
+            return 'trigger_flow';
+        }
+
+        return 'data_flow';
+    }
+
+    private function connectionTypeAllowed(string $edgeType, string $sourceType, string $targetType): bool
+    {
+        $sourceCategory = $this->catalog->all()[$sourceType]['category'] ?? 'action';
+        $targetCategory = $this->catalog->all()[$targetType]['category'] ?? 'action';
+
+        return match ($edgeType) {
+            'routing' => $sourceType === 'orchestrator' && $targetType === 'ai_agent',
+            'agent_capability' => $sourceType === 'ai_agent' && in_array($targetCategory, ['action', 'condition', 'transform', 'output'], true),
+            'data_flow' => in_array($sourceCategory, ['action', 'transform'], true)
+                && in_array($targetCategory, ['action', 'transform', 'output', 'condition'], true),
+            'trigger_flow' => $sourceCategory === 'trigger' && $targetCategory !== 'trigger',
+            'control_flow', 'conditional_flow' => $sourceCategory !== 'trigger' && $targetCategory !== 'trigger',
+            default => false,
+        };
+    }
+
+    /** @param array<string, mixed> $config */
+    private function validateEdgeConfig(mixed $config): void
+    {
+        if (! is_array($config)) {
+            $this->fail('Connection settings must be an object.');
+        }
+        if ($this->containsCredentialKey($config)) {
+            $this->fail('Connection settings cannot contain credentials.');
+        }
+
+        foreach ([
+            'trigger' => ['manual', 'row_created', 'row_updated', 'row_created_or_updated'],
+            'mode' => ['create', 'update', 'upsert', 'skip'],
+            'on_error' => ['stop_branch', 'stop_workflow', 'continue', 'retry'],
+        ] as $field => $allowed) {
+            if (isset($config[$field]) && (! is_string($config[$field]) || ! in_array($config[$field], $allowed, true))) {
+                $this->fail('Choose a supported connection setting.');
+            }
+        }
+
+        if (isset($config['branch']) && ! in_array($config['branch'], ['true', 'false', 'yes', 'no'], true)) {
+            $this->fail('Condition connections must use a true or false branch.');
+        }
+
+        if (isset($config['duplicate_key']) && (! is_string($config['duplicate_key']) || mb_strlen($config['duplicate_key']) > 100)) {
+            $this->fail('The duplicate key must be under 101 characters.');
+        }
+
+        $mapping = $config['mapping'] ?? [];
+        if (! is_array($mapping) || count($mapping) > 30) {
+            $this->fail('Add no more than 30 field mappings per connection.');
+        }
+        foreach ($mapping as $targetField => $sourceField) {
+            if (! is_string($targetField) || ! preg_match('/^[a-zA-Z][a-zA-Z0-9_. -]{0,99}$/', $targetField)
+                || ! is_string($sourceField) || ! preg_match('/^[a-zA-Z][a-zA-Z0-9_. -]{0,99}$/', $sourceField)) {
+                $this->fail('Field mappings must use valid source and destination field names.');
             }
         }
     }

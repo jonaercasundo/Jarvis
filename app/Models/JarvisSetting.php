@@ -10,7 +10,7 @@ class JarvisSetting extends Model
     protected $fillable = [
         'user_id', 'ai_name', 'owner_name', 'api_key_encrypted', 'api_key_hint',
         'allowed_actions', 'confirm_before_send', 'tone', 'daily_credit_limit',
-        'scope_of_work', 'limitations', 'workflow_url',
+        'scope_of_work', 'limitations', 'workflow_url', 'learned_memory', 'wake_name_variants', 'active_vrm', 'capability_demonstrations',
 
         // Email settings
         'email_address', 'email_password_encrypted',
@@ -24,6 +24,7 @@ class JarvisSetting extends Model
         'allowed_actions' => 'array',
         'confirm_before_send' => 'boolean',
         'daily_credit_limit' => 'integer',
+        'wake_name_variants' => 'array',
     ];
 
     /** Get the settings row for the current user (created on first use). */
@@ -80,9 +81,12 @@ class JarvisSetting extends Model
             'allowed_actions' => $this->allowed_actions ?? [],
             'confirm_before_send' => $this->confirm_before_send,
             'tone' => $this->tone,
+            'capability_demonstrations' => $this->capability_demonstrations ?? 'ask_first',
             'daily_credit_limit' => $this->daily_credit_limit,
             'scope_of_work' => $this->scope_of_work,
             'limitations' => $this->limitations,
+            'learned_memory' => $this->learned_memory,
+            'wake_name_variants' => $this->wake_name_variants ?? [],
             'workflow_url' => $this->workflow_url,
 
             // Email (password is never sent)
